@@ -21,18 +21,22 @@ class ConditioningMethod(ABC):
     def __init__(self, operator, noiser, **kwargs):
         self.operator = operator
         self.noiser = noiser
+        self.l1 = kwargs.get('l1', 0.0)
     
     def project(self, data, noisy_measurement, **kwargs):
         return self.operator.project(data=data, measurement=noisy_measurement, **kwargs)
     
     def grad_and_value(self, x_prev, x_0_hat, measurement, **kwargs):
-        if self.noiser.__name__ == 'gaussian':
-            difference = measurement - self.operator.forward(x_0_hat, **kwargs)
-            norm = torch.linalg.norm(difference)
-            norm_grad = torch.autograd.grad(outputs=norm, inputs=x_prev)[0]
+        if self.noiser.__name__ == 'gaussian': 
+            Ax = self.operator.forward(x_0_hat, **kwargs)  # Forward operation is 
+            difference = measurement - Ax
+            difference_reshaped = difference.reshape(difference.shape[0], -1)  # Reshape to flatten the image dimensions
+            print('l1 = ', self.l1)
+            norm = (1-self.l1) * torch.linalg.norm(difference_reshaped, dim=-1) + self.l1* torch.linalg.norm(difference_reshaped, dim=-1, ord=1) # Norm is of shape batch_size
+            norm_grad = torch.autograd.grad(outputs=norm.sum(), inputs=x_prev)[0]
         
         elif self.noiser.__name__ == 'poisson':
-            Ax = self.operator.forward(x_0_hat, **kwargs)
+            Ax = self.operator.forward(x_0_hat, **kwargs)  
             difference = measurement-Ax
             norm = torch.linalg.norm(difference) / measurement.abs()
             norm = norm.mean()
@@ -80,6 +84,7 @@ class PosteriorSampling(ConditioningMethod):
     def __init__(self, operator, noiser, **kwargs):
         super().__init__(operator, noiser)
         self.scale = kwargs.get('scale', 1.0)
+        self.l1 = kwargs.get('l1', 0.0)
 
     def conditioning(self, x_prev, x_t, x_0_hat, measurement, **kwargs):
         norm_grad, norm = self.grad_and_value(x_prev=x_prev, x_0_hat=x_0_hat, measurement=measurement, **kwargs)

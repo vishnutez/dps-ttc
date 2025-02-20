@@ -173,7 +173,8 @@ class GaussianDiffusion:
                       measurement,
                       measurement_cond_fn,
                       record,
-                      save_root):
+                      save_root,
+                      **kwargs):
         """
         The function used for sampling from noise.
         """ 
@@ -182,7 +183,9 @@ class GaussianDiffusion:
 
         pbar = tqdm(list(range(self.num_timesteps))[::-1])
         for idx in pbar:
-            time = torch.tensor([idx] * img.shape[0], device=device)
+            # time = torch.tensor([idx] * img.shape[0], device=device)  # TODO: check this line
+
+            time = torch.tensor([idx] * 1, device=device)
             
             img = img.requires_grad_()
             out = self.p_sample(x=img, t=time, model=model)
@@ -198,13 +201,13 @@ class GaussianDiffusion:
                                       x_0_hat=out['pred_xstart'])
             img = img.detach_()
            
-            pbar.set_postfix({'distance': distance.item()}, refresh=False)
+            pbar.set_postfix({'distance': distance.mean().item()}, refresh=False)
             if record:
                 if idx % 10 == 0:
                     file_path = os.path.join(save_root, f"progress/x_{str(idx).zfill(4)}.png")
                     plt.imsave(file_path, clear_color(img))
 
-        return img       
+        return img, distance       
         
     def p_sample(self, model, x, t):
         raise NotImplementedError
@@ -404,6 +407,218 @@ class DDIM(SpacedDiffusion):
         coef1 = extract_and_expand(self.sqrt_recip_alphas_cumprod, t, x_t)
         coef2 = extract_and_expand(self.sqrt_recipm1_alphas_cumprod, t, x_t)
         return (coef1 * x_t - pred_xstart) / coef2
+    
+
+@register_sampler(name='ttc_ddpm')
+class TTC_DDPM(DDPM): 
+
+    @torch.no_grad()
+    def resample_update(self, 
+                 candidates, 
+                 denoised_candidates,
+                 operator, 
+                 measurement, 
+                 resample=True,
+                 rs_temp=0.01,
+                 prev_costs=None,
+                 potential_type='min',
+                 steps_done=1):
+        """
+        Resample x (B, C, H, W) based on "potential" on y,
+
+        :net_rewards: "sufficient" statistic for cost accumulated for the candidate.
+
+        """
+        device = denoised_candidates.device
+        n_particles = denoised_candidates.shape[0]
+
+
+        # Resample the particles based on the potential defined from the prev costs        
+        if resample and prev_costs is not None:
+
+            if potential_type == 'mean':
+                rs_potentials = torch.exp(- rs_temp * prev_costs / steps_done).to(device)
+                print('Insider mean, rs_potentials = ', rs_potentials)
+            else:
+                rs_potentials = torch.exp(- rs_temp * prev_costs).to(device)
+
+            if rs_potentials.max() != rs_potentials.min():          
+                rs_particles = torch.multinomial(rs_potentials, n_particles, replacement=True).to(device) 
+
+                print(f'Resampled, IDS = {rs_particles}')
+
+                candidates = candidates[rs_particles]
+                denoised_candidates = denoised_candidates[rs_particles]
+                prev_costs = prev_costs[rs_particles]
+
+        print('prev_costs = ', prev_costs)
+                
+        # Update the costs
+        Ax = operator.forward(denoised_candidates)
+        delta = measurement - Ax
+        delta = delta.reshape(n_particles, -1)
+
+        B, C, H, W = denoised_candidates.shape
+
+        curr_costs = torch.linalg.norm(delta, dim=-1, ord=1) / (C * H * W)
+
+        if potential_type == 'mean':
+            if prev_costs == None:
+                net_costs = curr_costs
+            else:
+                net_costs = curr_costs + prev_costs
+        elif potential_type == 'min':
+            if prev_costs == None:
+                net_costs = curr_costs
+            else:
+                costs = torch.stack([curr_costs, prev_costs], dim=1)
+                net_costs = torch.min(costs, dim=1).values
+        elif potential_type == 'diff':
+            if prev_costs == None:
+                net_costs = curr_costs
+            else:
+                net_costs = curr_costs - prev_costs
+        elif potential_type == "curr":
+            net_costs = curr_costs    
+        else:
+            raise NotImplementedError
+        
+        return candidates, net_costs
+
+
+    
+    # Modify the function to use more test time compute by allowing resampling
+    def p_sample_loop(self,
+                      model,
+                      x_start,
+                      measurement,
+                      measurement_cond_fn,
+                      record,
+                      save_root,
+                      operator,
+                      potential_type='min',
+                      resample_every_steps=10,
+                      rs_temp=0.1):
+        """
+        The function used for sampling from noise.
+        """ 
+        img = x_start
+        device = x_start.device
+        resample_every_steps = 10
+
+        B, C, H, W = img.shape
+
+        costs = None  # Initialize costs
+
+        pbar = tqdm(list(range(self.num_timesteps))[::-1])
+        for idx in pbar:
+            # time = torch.tensor([idx] * img.shape[0], device=device)  # TODO: check this line
+
+            time = torch.tensor([idx] * 1, device=device)
+            
+            img = img.requires_grad_()
+            out = self.p_sample(x=img, t=time, model=model)
+            
+            # Give condition.
+            noisy_measurement = self.q_sample(measurement, t=time)
+
+            # TODO: how can we handle argument for different condition method?
+            img, distance = measurement_cond_fn(x_t=out['sample'],
+                                      measurement=measurement,
+                                      noisy_measurement=noisy_measurement,
+                                      x_prev=img,
+                                      x_0_hat=out['pred_xstart'])
+            img = img.detach_()  # Proposed samples
+
+            print('potential_type = ', potential_type)
+
+            img, costs = self.resample_update(candidates=img,
+                                        denoised_candidates=out['pred_xstart'], 
+                                        prev_costs=costs,
+                                        operator=operator, 
+                                        measurement=measurement, 
+                                        rs_temp=rs_temp,
+                                        resample=idx % resample_every_steps == 0,
+                                        potential_type=potential_type, 
+                                        steps_done=idx+1)
+           
+            pbar.set_postfix({'distance': distance.mean().item()}, refresh=False)
+            if record:
+                if idx % 10 == 0:
+                    file_path = os.path.join(save_root, f"progress/x_{str(idx).zfill(4)}.png")
+                    plt.imsave(file_path, clear_color(img))
+
+        return img, distance
+    
+
+@register_sampler(name='ttc_ddim')
+class TTC_DDIM(DDIM):
+
+    
+    # Modify the function to use more test time compute by allowing resampling
+    def p_sample_loop(self,
+                      model,
+                      x_start,
+                      measurement,
+                      measurement_cond_fn,
+                      record,
+                      save_root):
+        """
+        The function used for sampling from noise.
+        """ 
+        img = x_start
+        device = x_start.device
+        resample_every_steps = 10
+
+        B, C, H, W = img.shape
+
+        pbar = tqdm(list(range(self.num_timesteps))[::-1])
+        for idx in pbar:
+            # time = torch.tensor([idx] * img.shape[0], device=device)  # TODO: check this line
+
+            time = torch.tensor([idx] * 1, device=device)
+            
+            img = img.requires_grad_()
+            out = self.p_sample(x=img, t=time, model=model)
+            
+            # Give condition.
+            noisy_measurement = self.q_sample(measurement, t=time)
+
+            # TODO: how can we handle argument for different condition method?
+            img, distance = measurement_cond_fn(x_t=out['sample'],
+                                      measurement=measurement,
+                                      noisy_measurement=noisy_measurement,
+                                      x_prev=img,
+                                      x_0_hat=out['pred_xstart'])
+            img = img.detach_()  # Proposed samples
+
+            n_particles = len(distance)
+
+            if n_particles > 1:
+                # Compute resampling weights
+                resample_scale = 100
+                resample_weights = torch.exp(- distance / resample_scale).to(device)
+                resample_weights.detach_()
+
+                if resample_weights.max() != resample_weights.min() and idx % resample_every_steps == 0:
+                    # Resample particles                
+                    ids = torch.multinomial(resample_weights, n_particles, replacement=True).to(device)
+                    print(f'Resampling, ids = {ids}, idx = {idx}')   
+                    img = img[ids]
+                    distance = distance[ids]
+    
+           
+            pbar.set_postfix({'distance': distance.mean().item()}, refresh=False)
+            if record:
+                if idx % 10 == 0:
+                    file_path = os.path.join(save_root, f"progress/x_{str(idx).zfill(4)}.png")
+                    plt.imsave(file_path, clear_color(img))
+
+        return img, distance
+
+
+
+
 
 
 # =================
