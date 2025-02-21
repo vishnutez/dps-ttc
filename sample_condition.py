@@ -37,6 +37,8 @@ def main():
     parser.add_argument('--potential_type', type=str, default='min')
     parser.add_argument('--rs_temp', type=float, default=0.1)
     parser.add_argument('--l1', type=float, default=0.0)
+    parser.add_argument('--start_idx', type=int, default=0)
+    parser.add_argument('--path_start_idx', type=int, default=0)
     args = parser.parse_args()
    
     # logger
@@ -99,7 +101,12 @@ def main():
                                     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     dataset = get_dataset(**data_config, transforms=transform)
 
-    subset = Subset(dataset, range(args.n_data_samples))
+    start_idx = args.start_idx
+    end_idx = start_idx + args.n_data_samples
+
+    import numpy as np
+
+    subset = Subset(dataset, np.arange(start_idx, end_idx, 1))
     loader = get_dataloader(subset, batch_size=1, num_workers=0, train=False) 
 
 
@@ -111,11 +118,13 @@ def main():
 
     avg_lpips = 0
     avg_psnr = 0
+
+    path_start_idx = args.path_start_idx
         
     # Do Inference
     for i, ref_img in enumerate(loader):
         logger.info(f"Inference for image {i}")
-        fname = str(i).zfill(5) 
+        fname = str(start_idx + i).zfill(5)
         ref_img = ref_img.to(device)
 
         # Exception) In case of inpainging,
@@ -139,7 +148,6 @@ def main():
 
         # import numpy as np
         # from PIL import Image
-
 
         # y_n_im = (clear_color(y_n) * 255).astype(np.uint8)
         # y_n_pil = Image.fromarray(y_n_im)
@@ -195,11 +203,15 @@ def main():
 
             # Add title and save the best sample
             plt.imshow(clear_color(sample[i].unsqueeze(0)))
-            plt.title(f"Path#{i+1} | PSNR: {psnr:.4f} LPIPS: {lpips:.4f} Distance: {distance[i]:.4f}")
+            plt.title(f"Path#{path_start_idx + i + 1} | PSNR: {psnr:.4f} LPIPS: {lpips:.4f} Distance: {distance[i]:.4f}")
             plt.axis('off')
             # Save the plt
-            plt.savefig(os.path.join(out_path, 'recon_paths', f'{fname}_path#{i+1}' + '.png'))
+            plt.savefig(os.path.join(out_path, 'recon_paths', f'{fname}_path#{path_start_idx+i+1}' + '.png'))
             plt.close()
+
+            # Open the file quantitative results and write the results
+            with open(os.path.join(out_path, f'{fname}_pathwise.txt'), 'a') as f:
+                f.write(f"Path#{path_start_idx + i + 1}, PSNR: {psnr}, LPIPS: {lpips}, Distance: {distance[i]} \n")
 
 
     avg_psnr /= args.n_data_samples
