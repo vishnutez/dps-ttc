@@ -5,8 +5,9 @@ conditioning:
 
 data:
   name: ffhq
-  root: ./data/samples/
-
+  # root: ./data/samples/
+  root: ../data/ffhq256/
+  
 measurement:
   operator:
     name: gaussian_blur
