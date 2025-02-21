@@ -1,6 +1,7 @@
 # Ignore the saved models
 models/
 results/
+old_results/
 
 # Ignore the bkse, motionblur
 bkse/

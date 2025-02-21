@@ -85,12 +85,12 @@ def main():
                         rs_temp=args.rs_temp)
 
     # Directory name
-    dir_name = f"{measure_config['operator']['name']}_{diffusion_config['sampler']}_{diffusion_config['steps']}_steps_potential_{args.potential_type}_l1_{args.l1}"
+    dir_name = f"{measure_config['operator']['name']}_n_particles_{args.n_particles}_n_data_samples_{args.n_data_samples}"
    
     # Working directory
     out_path = os.path.join(args.save_dir, dir_name)
     os.makedirs(out_path, exist_ok=True)
-    for img_dir in ['input', 'recon', 'progress', 'label']:
+    for img_dir in ['input', 'recon_paths', 'recon_best', 'recon_avg', 'progress', 'label']:
         os.makedirs(os.path.join(out_path, img_dir), exist_ok=True)
 
     # Prepare dataloader
@@ -108,11 +108,14 @@ def main():
         mask_gen = mask_generator(
            **measure_config['mask_opt']
         )
+
+    avg_lpips = 0
+    avg_psnr = 0
         
     # Do Inference
     for i, ref_img in enumerate(loader):
         logger.info(f"Inference for image {i}")
-        fname = str(i).zfill(5) + '.png'
+        fname = str(i).zfill(5) 
         ref_img = ref_img.to(device)
 
         # Exception) In case of inpainging,
@@ -134,40 +137,80 @@ def main():
         # Sampling
         C, H, W = ref_img.shape[1], ref_img.shape[2], ref_img.shape[3]
 
-        import numpy as np
-        from PIL import Image
+        # import numpy as np
+        # from PIL import Image
 
 
-        y_n_im = (clear_color(y_n) * 255).astype(np.uint8)
-        y_n_pil = Image.fromarray(y_n_im)
-        y_n_pil.save(os.path.join(out_path, 'progress', f'input_{fname}'))
+        # y_n_im = (clear_color(y_n) * 255).astype(np.uint8)
+        # y_n_pil = Image.fromarray(y_n_im)
+        # y_n_pil.save(os.path.join(out_path, 'progress', f'input_{fname}' + '.png'))
 
-        # Resize to (256, 256)
-        y_n_pil_resized = y_n_pil.resize((256, 256), Image.LANCZOS)
-        y_n_pil_resized.save(os.path.join(out_path, 'progress', f'resized_{fname}'))
+        # # Resize to (256, 256)
+        # y_n_pil_resized = y_n_pil.resize((256, 256), Image.LANCZOS)
+        # y_n_pil_resized.save(os.path.join(out_path, 'progress', f'resized_{fname}' + '.png'))
 
         x_start = torch.randn((args.n_particles, C, H, W), device=device).requires_grad_()
-        sample, distance = sample_fn(x_start=x_start, measurement=y_n, record=False, save_root=out_path)
+        sample, distance, distances = sample_fn(x_start=x_start, measurement=y_n, record=False, save_root=out_path)
 
-        plt.imsave(os.path.join(out_path, 'input', fname), clear_color(y_n))
-        plt.imsave(os.path.join(out_path, 'label', fname), clear_color(ref_img))
-
-        for i in range(len(sample)):
-            plt.imsave(os.path.join(out_path, 'recon', f'id_{i}_{fname}'), clear_color(sample[i].unsqueeze(0)))
+        plt.imsave(os.path.join(out_path, 'input', fname + '.png'), clear_color(y_n))
+        plt.imsave(os.path.join(out_path, 'label', fname + '.png'), clear_color(ref_img))
 
         best_sample = sample[torch.argmin(distance)]
-        plt.imsave(os.path.join(out_path, 'recon', f'best_recon_{fname}'), clear_color(best_sample.unsqueeze(0)))
-
-        avg_sample = sample.mean(dim=0).unsqueeze(0)
-        plt.imsave(os.path.join(out_path, 'recon', f'avg_recon_{fname}'), clear_color(avg_sample))
-
-
-        # Compute PSNR and LPIPS
+        avg_sample = sample.mean(dim=0)
 
         from compute_metrics import compute_psnr, compute_lpips
+
         psnr = compute_psnr(ref_img, best_sample.unsqueeze(0))
         lpips = compute_lpips(ref_img, best_sample.unsqueeze(0))
-        logger.info(f"Method:{diffusion_config['sampler']} / PSNR: {psnr} / LPIPS: {lpips}")
+        logger.info(f"Best | Method:{diffusion_config['sampler']} / PSNR: {psnr} / LPIPS: {lpips}")
+
+        avg_psnr += psnr  # Record the best values
+        avg_lpips += lpips
+
+        # Add title and save the best sample
+        plt.imshow(clear_color(best_sample.unsqueeze(0)))
+        plt.title(f"Best | PSNR: {psnr:.2f} LPIPS: {lpips:.2f} Distance: {distance[torch.argmin(distance)]:.2f}")
+        plt.axis('off')
+        # Save the plt
+        plt.savefig(os.path.join(out_path, 'recon_best', f'{fname}_best' + '.png'))
+        plt.close()
+
+        psnr = compute_psnr(ref_img, avg_sample.unsqueeze(0))
+        lpips = compute_lpips(ref_img, avg_sample.unsqueeze(0))
+        logger.info(f"Avg | Method:{diffusion_config['sampler']} / PSNR: {psnr} / LPIPS: {lpips}")
+
+        # Add title and save the best sample
+        plt.imshow(clear_color(avg_sample.unsqueeze(0)))
+        plt.title(f"Avg | PSNR: {psnr:.2f} LPIPS: {lpips:.2f}")
+        plt.axis('off')
+        # Save the plt
+        plt.savefig(os.path.join(out_path, 'recon_avg', f'{fname}_avg' + '.png'))
+        plt.close()
+
+        for i in range(len(sample)):
+
+            psnr = compute_psnr(ref_img, sample[i].unsqueeze(0))
+            lpips = compute_lpips(ref_img, sample[i].unsqueeze(0))
+            logger.info(f"Avg | Method:{diffusion_config['sampler']} / PSNR: {psnr} / LPIPS: {lpips}")
+
+            # Add title and save the best sample
+            plt.imshow(clear_color(sample[i].unsqueeze(0)))
+            plt.title(f"Avg | PSNR: {psnr:.2f} LPIPS: {lpips:.2f} Distance: {distance[i]:.2f}")
+            plt.axis('off')
+            # Save the plt
+            plt.savefig(os.path.join(out_path, 'recon_paths', f'{fname}_path#{i+1}' + '.png'))
+            plt.close()
+
+
+    avg_psnr /= args.n_data_samples
+    avg_lpips /= args.n_data_samples
+
+    logger.info(f"Average PSNR: {avg_psnr} / Average LPIPS: {avg_lpips}")
+
+    # Open the file quantitative results and write the results
+    with open(os.path.join(out_path, 'quantitative_results.txt'), 'w') as f:
+        f.write(f"Average PSNR: {avg_psnr}, Average LPIPS: {avg_lpips}")
+        
 
 
 if __name__ == '__main__':

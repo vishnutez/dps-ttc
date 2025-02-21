@@ -182,6 +182,9 @@ class GaussianDiffusion:
         device = x_start.device
 
         pbar = tqdm(list(range(self.num_timesteps))[::-1])
+
+        distances = np.zeros((x_start.shape[0], self.num_timesteps))
+
         for idx in pbar:
             # time = torch.tensor([idx] * img.shape[0], device=device)  # TODO: check this line
 
@@ -200,6 +203,8 @@ class GaussianDiffusion:
                                       x_prev=img,
                                       x_0_hat=out['pred_xstart'])
             img = img.detach_()
+
+            distances[:, self.num_timesteps-idx-1] = distance.detach().cpu().numpy()
            
             pbar.set_postfix({'distance': distance.mean().item()}, refresh=False)
             if record:
@@ -207,7 +212,7 @@ class GaussianDiffusion:
                     file_path = os.path.join(save_root, f"progress/x_{str(idx).zfill(4)}.png")
                     plt.imsave(file_path, clear_color(img))
 
-        return img, distance       
+        return img, distance, distances       
         
     def p_sample(self, model, x, t):
         raise NotImplementedError
