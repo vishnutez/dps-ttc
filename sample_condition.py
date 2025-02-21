@@ -169,7 +169,7 @@ def main():
 
         # Add title and save the best sample
         plt.imshow(clear_color(best_sample.unsqueeze(0)))
-        plt.title(f"Best | PSNR: {psnr:.2f} LPIPS: {lpips:.2f} Distance: {distance[torch.argmin(distance)]:.2f}")
+        plt.title(f"Best | PSNR: {psnr:.4f} LPIPS: {lpips:.4f} Distance: {distance[torch.argmin(distance)]:.4f}")
         plt.axis('off')
         # Save the plt
         plt.savefig(os.path.join(out_path, 'recon_best', f'{fname}_best' + '.png'))
@@ -181,7 +181,7 @@ def main():
 
         # Add title and save the best sample
         plt.imshow(clear_color(avg_sample.unsqueeze(0)))
-        plt.title(f"Avg | PSNR: {psnr:.2f} LPIPS: {lpips:.2f}")
+        plt.title(f"Avg | PSNR: {psnr:.4f} LPIPS: {lpips:.4f}")
         plt.axis('off')
         # Save the plt
         plt.savefig(os.path.join(out_path, 'recon_avg', f'{fname}_avg' + '.png'))
@@ -195,7 +195,7 @@ def main():
 
             # Add title and save the best sample
             plt.imshow(clear_color(sample[i].unsqueeze(0)))
-            plt.title(f"Avg | PSNR: {psnr:.2f} LPIPS: {lpips:.2f} Distance: {distance[i]:.2f}")
+            plt.title(f"Path#{i+1} | PSNR: {psnr:.4f} LPIPS: {lpips:.4f} Distance: {distance[i]:.4f}")
             plt.axis('off')
             # Save the plt
             plt.savefig(os.path.join(out_path, 'recon_paths', f'{fname}_path#{i+1}' + '.png'))
