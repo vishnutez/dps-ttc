@@ -185,6 +185,10 @@ class GaussianDiffusion:
 
         distances = np.zeros((x_start.shape[0], self.num_timesteps))
 
+        no_guidance_steps = kwargs.get('no_guidance_steps', 1000)
+
+        print('no_guidance_steps = ', no_guidance_steps)
+
         for idx in pbar:
             # time = torch.tensor([idx] * img.shape[0], device=device)  # TODO: check this line
 
@@ -196,12 +200,32 @@ class GaussianDiffusion:
             # Give condition.
             noisy_measurement = self.q_sample(measurement, t=time)
 
-            # TODO: how can we handle argument for different condition method?
-            img, distance = measurement_cond_fn(x_t=out['sample'],
-                                      measurement=measurement,
-                                      noisy_measurement=noisy_measurement,
-                                      x_prev=img,
-                                      x_0_hat=out['pred_xstart'])
+
+            if idx <= no_guidance_steps:
+                print("Performing guidance.")
+                # TODO: how can we handle argument for different condition method?
+                img, distance = measurement_cond_fn(x_t=out['sample'],
+                                        measurement=measurement,
+                                        noisy_measurement=noisy_measurement,
+                                        x_prev=img,
+                                        x_0_hat=out['pred_xstart'])
+            else:
+                # Compute the distance
+
+                operator = kwargs.get('operator', None)
+
+                if operator is not None:
+                    print('Operator is given. The distance is calculated.')
+                    Ax = operator.forward(out['pred_xstart'])
+                    delta = measurement - Ax
+                    delta = delta.reshape(x_start.shape[0], -1)
+
+                    distance = torch.linalg.norm(delta, dim=-1, ord=1) / (x_start.shape[1] * x_start.shape[2] * x_start.shape[3])
+                else:   
+                    print('No operator is given. The distance is set to 0.')
+                    distance = torch.tensor([0.0] * x_start.shape[0])
+
+
             img = img.detach_()
 
             distances[:, self.num_timesteps-idx-1] = distance.detach().cpu().numpy()

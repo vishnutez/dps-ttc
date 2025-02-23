@@ -83,8 +83,9 @@ class ManifoldConstraintGradient(ConditioningMethod):
 class PosteriorSampling(ConditioningMethod):
     def __init__(self, operator, noiser, **kwargs):
         super().__init__(operator, noiser)
-        self.scale = kwargs.get('scale', 1.0)
+        self.scale = kwargs.get('scale', 5.0)
         self.l1 = kwargs.get('l1', 0.0)
+        print('scale = ', self.scale)
 
     def conditioning(self, x_prev, x_t, x_0_hat, measurement, **kwargs):
         norm_grad, norm = self.grad_and_value(x_prev=x_prev, x_0_hat=x_0_hat, measurement=measurement, **kwargs)

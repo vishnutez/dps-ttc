@@ -32,13 +32,15 @@ def main():
     parser.add_argument('--gpu', type=int, default=0)
     parser.add_argument('--save_dir', type=str, default='./results')
     parser.add_argument('--n_data_samples', type=int, default=1)
-    parser.add_argument('--n_particles', type=int, default=1)
+    parser.add_argument('--n_paths', type=int, default=1)
     parser.add_argument('--resample_every_steps', type=int, default=10)
     parser.add_argument('--potential_type', type=str, default='min')
     parser.add_argument('--rs_temp', type=float, default=0.1)
     parser.add_argument('--l1', type=float, default=0.0)
     parser.add_argument('--start_idx', type=int, default=0)
-    parser.add_argument('--path_start_idx', type=int, default=0)
+    parser.add_argument('--no_guidance_steps', type=int, default=1000)
+    parser.add_argument('--batch_size', type=int, default=1)
+    parser.add_argument('--n_path_groups', type=int, default=4)
     args = parser.parse_args()
    
     # logger
@@ -84,15 +86,16 @@ def main():
                         operator=operator, 
                         resample_every_steps=args.resample_every_steps,
                         potential_type=args.potential_type,
+                        no_guidance_steps=args.no_guidance_steps,
                         rs_temp=args.rs_temp)
 
     # Directory name
-    dir_name = f"{measure_config['operator']['name']}_n_particles_{args.n_particles}_n_data_samples_{args.n_data_samples}"
+    dir_name = f"{measure_config['operator']['name']}"
    
     # Working directory
     out_path = os.path.join(args.save_dir, dir_name)
     os.makedirs(out_path, exist_ok=True)
-    for img_dir in ['input', 'recon_paths', 'recon_best', 'recon_avg', 'progress', 'label']:
+    for img_dir in ['input', 'recon_paths', 'label']:
         os.makedirs(os.path.join(out_path, img_dir), exist_ok=True)
 
     # Prepare dataloader
@@ -101,14 +104,10 @@ def main():
                                     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     dataset = get_dataset(**data_config, transforms=transform)
 
-    start_idx = args.start_idx
-    end_idx = start_idx + args.n_data_samples
-
     import numpy as np
 
-    subset = Subset(dataset, np.arange(start_idx, end_idx, 1))
+    subset = Subset(dataset, np.arange(args.start_idx, args.start_idx + args.n_data_samples, 1))
     loader = get_dataloader(subset, batch_size=1, num_workers=0, train=False) 
-
 
     # Exception) In case of inpainting, we need to generate a mask 
     if measure_config['operator']['name'] == 'inpainting':
@@ -116,16 +115,17 @@ def main():
            **measure_config['mask_opt']
         )
 
-    avg_lpips = 0
-    avg_psnr = 0
-
-    path_start_idx = args.path_start_idx
+    pathwise_psnr = np.zeros([args.n_data_samples, args.n_paths])
+    pathwise_lpips = np.zeros([args.n_data_samples, args.n_paths])
+    pathwise_distances = np.zeros([args.n_data_samples, args.n_paths])
         
     # Do Inference
-    for i, ref_img in enumerate(loader):
-        logger.info(f"Inference for image {i}")
-        fname = str(start_idx + i).zfill(5)
+    for img_idx, ref_img in enumerate(loader):
+        logger.info(f"Inference for image {img_idx}")
+        fname = str(args.start_idx + img_idx).zfill(5)
         ref_img = ref_img.to(device)
+
+        os.makedirs(os.path.join(out_path, 'recon_paths', f'{fname}'), exist_ok=True)
 
         # Exception) In case of inpainging,
         if measure_config['operator'] ['name'] == 'inpainting':
@@ -146,84 +146,52 @@ def main():
         # Sampling
         C, H, W = ref_img.shape[1], ref_img.shape[2], ref_img.shape[3]
 
-        # import numpy as np
-        # from PIL import Image
-
-        # y_n_im = (clear_color(y_n) * 255).astype(np.uint8)
-        # y_n_pil = Image.fromarray(y_n_im)
-        # y_n_pil.save(os.path.join(out_path, 'progress', f'input_{fname}' + '.png'))
-
-        # # Resize to (256, 256)
-        # y_n_pil_resized = y_n_pil.resize((256, 256), Image.LANCZOS)
-        # y_n_pil_resized.save(os.path.join(out_path, 'progress', f'resized_{fname}' + '.png'))
-
-        x_start = torch.randn((args.n_particles, C, H, W), device=device).requires_grad_()
-        sample, distance, distances = sample_fn(x_start=x_start, measurement=y_n, record=False, save_root=out_path)
-
         plt.imsave(os.path.join(out_path, 'input', fname + '.png'), clear_color(y_n))
         plt.imsave(os.path.join(out_path, 'label', fname + '.png'), clear_color(ref_img))
 
-        best_sample = sample[torch.argmin(distance)]
-        avg_sample = sample.mean(dim=0)
+        for path_group_idx in range(args.n_paths // args.batch_size):
+            x_start = torch.randn((args.batch_size, C, H, W), device=device).requires_grad_()
+            sample, sample_distance, sample_distances = sample_fn(x_start=x_start, measurement=y_n, record=False, save_root=out_path)
 
-        from compute_metrics import compute_psnr, compute_lpips
+            from compute_metrics import compute_psnr, compute_lpips
 
-        psnr = compute_psnr(ref_img, best_sample.unsqueeze(0))
-        lpips = compute_lpips(ref_img, best_sample.unsqueeze(0))
-        logger.info(f"Best | Method:{diffusion_config['sampler']} / PSNR: {psnr} / LPIPS: {lpips}")
+            for sample_idx in range(len(sample)):
 
-        avg_psnr += psnr  # Record the best values
-        avg_lpips += lpips
+                path_idx = path_group_idx * args.batch_size + sample_idx
 
-        # Add title and save the best sample
-        plt.imshow(clear_color(best_sample.unsqueeze(0)))
-        plt.title(f"Best | PSNR: {psnr:.4f} LPIPS: {lpips:.4f} Distance: {distance[torch.argmin(distance)]:.4f}")
-        plt.axis('off')
-        # Save the plt
-        plt.savefig(os.path.join(out_path, 'recon_best', f'{fname}_best' + '.png'))
-        plt.close()
+                psnr = compute_psnr(ref_img, sample[sample_idx].unsqueeze(0))
+                lpips = compute_lpips(ref_img, sample[sample_idx].unsqueeze(0))
+                logger.info(f"Path#{path_idx + 1} | Method:{diffusion_config['sampler']} / PSNR: {psnr} / LPIPS: {lpips}")
 
-        psnr = compute_psnr(ref_img, avg_sample.unsqueeze(0))
-        lpips = compute_lpips(ref_img, avg_sample.unsqueeze(0))
-        logger.info(f"Avg | Method:{diffusion_config['sampler']} / PSNR: {psnr} / LPIPS: {lpips}")
+                # Add title and save the best sample
+                plt.imshow(clear_color(sample[sample_idx].unsqueeze(0)))
+                plt.title(f"Path#{path_idx + 1} | PSNR: {psnr:.4f} LPIPS: {lpips:.4f} Distance: {sample_distance[sample_idx]:.4f}")
+                plt.axis('off')
+                # Save the plt
+                plt.savefig(os.path.join(out_path, f'recon_paths/{fname}', f'path#{path_idx + 1}' + '.png'))
+                plt.close()
 
-        # Add title and save the best sample
-        plt.imshow(clear_color(avg_sample.unsqueeze(0)))
-        plt.title(f"Avg | PSNR: {psnr:.4f} LPIPS: {lpips:.4f}")
-        plt.axis('off')
-        # Save the plt
-        plt.savefig(os.path.join(out_path, 'recon_avg', f'{fname}_avg' + '.png'))
-        plt.close()
+                pathwise_distances[img_idx, path_idx] = sample_distance[sample_idx]
+                pathwise_psnr[img_idx, path_idx] = psnr
+                pathwise_lpips[img_idx, path_idx] = lpips
 
-        for i in range(len(sample)):
+                # # Open the file quantitative results and write the results
+                # with open(os.path.join(out_path, f'{fname}_pathwise.txt'), 'a') as f:
+                #     f.write(f"Path#{path_idx}, PSNR: {psnr}, LPIPS: {lpips}, Distance: {sample_distance[sample_idx]} \n")
 
-            psnr = compute_psnr(ref_img, sample[i].unsqueeze(0))
-            lpips = compute_lpips(ref_img, sample[i].unsqueeze(0))
-            logger.info(f"Avg | Method:{diffusion_config['sampler']} / PSNR: {psnr} / LPIPS: {lpips}")
+        # avg_psnr /= args.n_data_samples
+        # avg_lpips /= args.n_data_samples
 
-            # Add title and save the best sample
-            plt.imshow(clear_color(sample[i].unsqueeze(0)))
-            plt.title(f"Path#{path_start_idx + i + 1} | PSNR: {psnr:.4f} LPIPS: {lpips:.4f} Distance: {distance[i]:.4f}")
-            plt.axis('off')
-            # Save the plt
-            plt.savefig(os.path.join(out_path, 'recon_paths', f'{fname}_path#{path_start_idx+i+1}' + '.png'))
-            plt.close()
+        # logger.info(f"Average PSNR: {avg_psnr} / Average LPIPS: {avg_lpips}")
 
-            # Open the file quantitative results and write the results
-            with open(os.path.join(out_path, f'{fname}_pathwise.txt'), 'a') as f:
-                f.write(f"Path#{path_start_idx + i + 1}, PSNR: {psnr}, LPIPS: {lpips}, Distance: {distance[i]} \n")
+        # # Open the file quantitative results and write the results
+        # with open(os.path.join(out_path, 'quantitative_results.txt'), 'w') as f:
+        #     f.write(f"Average PSNR: {avg_psnr}, Average LPIPS: {avg_lpips}")
 
-
-    avg_psnr /= args.n_data_samples
-    avg_lpips /= args.n_data_samples
-
-    logger.info(f"Average PSNR: {avg_psnr} / Average LPIPS: {avg_lpips}")
-
-    # Open the file quantitative results and write the results
-    with open(os.path.join(out_path, 'quantitative_results.txt'), 'w') as f:
-        f.write(f"Average PSNR: {avg_psnr}, Average LPIPS: {avg_lpips}")
+    np.save(os.path.join(out_path, 'pathwise_distances.npy'), pathwise_distances)
+    np.save(os.path.join(out_path, 'pathwise_psnr.npy'), pathwise_psnr)
+    np.save(os.path.join(out_path, 'pathwise_lpips.npy'), pathwise_lpips)
         
-
 
 if __name__ == '__main__':
     main()
