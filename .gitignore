@@ -2,6 +2,7 @@
 models/
 results/
 old_results_02_20/
+old_logs/
 
 # Ignore the bkse, motionblur
 bkse/

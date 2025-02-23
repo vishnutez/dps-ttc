@@ -121,7 +121,7 @@ def main():
         
     # Do Inference
     for img_idx, ref_img in enumerate(loader):
-        logger.info(f"Inference for image {img_idx}")
+        logger.info(f"Inference for image {args.start_idx + img_idx}")
         fname = str(args.start_idx + img_idx).zfill(5)
         ref_img = ref_img.to(device)
 
@@ -163,17 +163,19 @@ def main():
                 lpips = compute_lpips(ref_img, sample[sample_idx].unsqueeze(0))
                 logger.info(f"Path#{path_idx + 1} | Method:{diffusion_config['sampler']} / PSNR: {psnr} / LPIPS: {lpips}")
 
-                # Add title and save the best sample
-                plt.imshow(clear_color(sample[sample_idx].unsqueeze(0)))
-                plt.title(f"Path#{path_idx + 1} | PSNR: {psnr:.4f} LPIPS: {lpips:.4f} Distance: {sample_distance[sample_idx]:.4f}")
-                plt.axis('off')
-                # Save the plt
-                plt.savefig(os.path.join(out_path, f'recon_paths/{fname}', f'path#{path_idx + 1}' + '.png'))
-                plt.close()
+                plt.imsave(os.path.join(out_path, 'recon_paths', f'{fname}', f'path#{path_idx + 1}' + '.png'), clear_color(sample[sample_idx].unsqueeze(0)))
 
-                pathwise_distances[img_idx, path_idx] = sample_distance[sample_idx]
-                pathwise_psnr[img_idx, path_idx] = psnr
-                pathwise_lpips[img_idx, path_idx] = lpips
+                # # Add title and save the best sample
+                # plt.imshow(clear_color(sample[sample_idx].unsqueeze(0)))
+                # plt.title(f"Path#{path_idx + 1} | PSNR: {psnr:.4f} LPIPS: {lpips:.4f} Distance: {sample_distance[sample_idx]:.4f}")
+                # plt.axis('off')
+                # # Save the plt
+                # plt.savefig(os.path.join(out_path, f'recon_paths/{fname}', f'path#{path_idx + 1}' + '.png'))
+                # plt.close()
+
+                pathwise_distances[args.start_idx + img_idx, path_idx] = sample_distance[sample_idx]
+                pathwise_psnr[args.start_idx + img_idx, path_idx] = psnr
+                pathwise_lpips[args.start_idx + img_idx, path_idx] = lpips
 
                 # # Open the file quantitative results and write the results
                 # with open(os.path.join(out_path, f'{fname}_pathwise.txt'), 'a') as f:
@@ -188,9 +190,9 @@ def main():
         # with open(os.path.join(out_path, 'quantitative_results.txt'), 'w') as f:
         #     f.write(f"Average PSNR: {avg_psnr}, Average LPIPS: {avg_lpips}")
 
-    np.save(os.path.join(out_path, 'pathwise_distances.npy'), pathwise_distances)
-    np.save(os.path.join(out_path, 'pathwise_psnr.npy'), pathwise_psnr)
-    np.save(os.path.join(out_path, 'pathwise_lpips.npy'), pathwise_lpips)
+        np.save(os.path.join(out_path, 'pathwise_distances.npy'), pathwise_distances)
+        np.save(os.path.join(out_path, 'pathwise_psnr.npy'), pathwise_psnr)
+        np.save(os.path.join(out_path, 'pathwise_lpips.npy'), pathwise_lpips)
         
 
 if __name__ == '__main__':

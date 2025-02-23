@@ -8,7 +8,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
 
-    parser.add_argument('--task_config', type=str, default='inpainting', help='Task configuration')
+    parser.add_argument('--task_config', type=str, default='motion_blur', help='Task configuration')
     args = parser.parse_args()
 
     path = f'./results/{args.task_config}/'
