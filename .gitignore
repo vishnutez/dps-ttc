@@ -1,10 +1,8 @@
 # Ignore the saved models
 models/
 results/
-results_batched/
-results_batched_1/
 results_pathwise/
-old_results_02_20/
+old_results/
 old_logs/
 
 # Ignore the bkse, motionblur

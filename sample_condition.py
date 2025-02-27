@@ -34,7 +34,7 @@ def main():
     parser.add_argument('--n_data_samples', type=int, default=1)
     parser.add_argument('--n_paths', type=int, default=1)
     parser.add_argument('--resample_every_steps', type=int, default=10)
-    parser.add_argument('--potential_type', type=str, default='min')
+    parser.add_argument('--potential_type', type=str, default='curr')
     parser.add_argument('--rs_temp', type=float, default=0.1)
     parser.add_argument('--l1', type=float, default=0.0)
     parser.add_argument('--start_idx', type=int, default=0)
@@ -90,7 +90,7 @@ def main():
                         rs_temp=args.rs_temp)
 
     # Directory name
-    dir_name = f"{measure_config['operator']['name']}"
+    dir_name = f"{measure_config['operator']['name']}_{diffusion_config['sampler']}_{diffusion_config['steps']}steps_noise_{measure_config['noise']['sigma']}"
    
     # Working directory
     out_path = os.path.join(args.save_dir, dir_name)
@@ -151,7 +151,7 @@ def main():
 
         for path_group_idx in range(args.n_paths // args.batch_size):
             x_start = torch.randn((args.batch_size, C, H, W), device=device).requires_grad_()
-            sample, sample_distance, sample_distances = sample_fn(x_start=x_start, measurement=y_n, record=False, save_root=out_path)
+            sample, sample_distance = sample_fn(x_start=x_start, measurement=y_n, record=False, save_root=out_path)
 
             from compute_metrics import compute_psnr, compute_lpips
 
@@ -173,9 +173,9 @@ def main():
                 # plt.savefig(os.path.join(out_path, f'recon_paths/{fname}', f'path#{path_idx + 1}' + '.png'))
                 # plt.close()
 
-                pathwise_distances[args.start_idx + img_idx, path_idx] = sample_distance[sample_idx]
-                pathwise_psnr[args.start_idx + img_idx, path_idx] = psnr
-                pathwise_lpips[args.start_idx + img_idx, path_idx] = lpips
+                # pathwise_distances[args.start_idx + img_idx, path_idx] = sample_distance[sample_idx]
+                # pathwise_psnr[args.start_idx + img_idx, path_idx] = psnr
+                # pathwise_lpips[args.start_idx + img_idx, path_idx] = lpips
 
                 # # Open the file quantitative results and write the results
                 # with open(os.path.join(out_path, f'{fname}_pathwise.txt'), 'a') as f:

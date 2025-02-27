@@ -30,7 +30,7 @@ def main():
     parser.add_argument('--diffusion_config', type=str)
     parser.add_argument('--task_config', type=str)
     parser.add_argument('--gpu', type=int, default=0)
-    parser.add_argument('--save_dir', type=str, default='./results_batched_1')
+    parser.add_argument('--save_dir', type=str, default='./results_batched_4')
     parser.add_argument('--n_data_samples', type=int, default=1)
     parser.add_argument('--n_paths', type=int, default=1)
     parser.add_argument('--resample_every_steps', type=int, default=10)

@@ -70,6 +70,8 @@ class GaussianDiffusion:
         assert (0 < self.betas).all() and (self.betas <=1).all(), "betas must be in (0..1]"
 
         self.num_timesteps = int(self.betas.shape[0])
+
+
         self.rescale_timesteps = rescale_timesteps
 
         alphas = 1.0 - self.betas
@@ -183,9 +185,10 @@ class GaussianDiffusion:
 
         pbar = tqdm(list(range(self.num_timesteps))[::-1])
 
+        print('num_timesteps = ', self.num_timesteps)
         distances = np.zeros((x_start.shape[0], self.num_timesteps))
 
-        no_guidance_steps = kwargs.get('no_guidance_steps', 1000)
+        no_guidance_steps = kwargs.get('no_guidance_steps', self.num_timesteps)
 
         print('no_guidance_steps = ', no_guidance_steps)
 
@@ -201,29 +204,29 @@ class GaussianDiffusion:
             noisy_measurement = self.q_sample(measurement, t=time)
 
 
-            if idx <= no_guidance_steps:
-                print("Performing guidance.")
-                # TODO: how can we handle argument for different condition method?
-                img, distance = measurement_cond_fn(x_t=out['sample'],
-                                        measurement=measurement,
-                                        noisy_measurement=noisy_measurement,
-                                        x_prev=img,
-                                        x_0_hat=out['pred_xstart'])
-            else:
-                # Compute the distance
+            # if idx <= no_guidance_steps:
+            print("Performing guidance.")
+            # TODO: how can we handle argument for different condition method?
+            img, distance = measurement_cond_fn(x_t=out['sample'],
+                                    measurement=measurement,
+                                    noisy_measurement=noisy_measurement,
+                                    x_prev=img,
+                                    x_0_hat=out['pred_xstart'])
+            # else:
+            #     # Compute the distance
 
-                operator = kwargs.get('operator', None)
+            #     operator = kwargs.get('operator', None)
 
-                if operator is not None:
-                    print('Operator is given. The distance is calculated.')
-                    Ax = operator.forward(out['pred_xstart'])
-                    delta = measurement - Ax
-                    delta = delta.reshape(x_start.shape[0], -1)
+            #     if operator is not None:
+            #         print('Operator is given. The distance is calculated.')
+            #         Ax = operator.forward(out['pred_xstart'])
+            #         delta = measurement - Ax
+            #         delta = delta.reshape(x_start.shape[0], -1)
 
-                    distance = torch.linalg.norm(delta, dim=-1, ord=1) / (x_start.shape[1] * x_start.shape[2] * x_start.shape[3])
-                else:   
-                    print('No operator is given. The distance is set to 0.')
-                    distance = torch.tensor([0.0] * x_start.shape[0])
+            #         distance = torch.linalg.norm(delta, dim=-1, ord=1) / (x_start.shape[1] * x_start.shape[2] * x_start.shape[3])
+            #     else:   
+            #         print('No operator is given. The distance is set to 0.')
+            #         distance = torch.tensor([0.0] * x_start.shape[0])
 
 
             img = img.detach_()
@@ -236,13 +239,15 @@ class GaussianDiffusion:
                     file_path = os.path.join(save_root, f"progress/x_{str(idx).zfill(4)}.png")
                     plt.imsave(file_path, clear_color(img))
 
-        return img, distance, distances       
+        return img, distance  
         
     def p_sample(self, model, x, t):
         raise NotImplementedError
 
     def p_mean_variance(self, model, x, t):
         model_output = model(x, self._scale_timesteps(t))
+
+        print('t input to the model = ', self._scale_timesteps(t))
         
         # In the case of "learned" variance, model will give twice channels.
         if model_output.shape[1] == 2 * x.shape[1]:
@@ -307,6 +312,7 @@ def space_timesteps(num_timesteps, section_counts):
     all_steps = []
     for i, section_count in enumerate(section_counts):
         size = size_per + (1 if i < extra else 0)
+        print('size = ', size)
         if size < section_count:
             raise ValueError(
                 f"cannot divide section of {size} steps into {section_count}"
@@ -322,6 +328,7 @@ def space_timesteps(num_timesteps, section_counts):
             cur_idx += frac_stride
         all_steps += taken_steps
         start_idx += size
+    print('all_steps = ', all_steps)
     return set(all_steps)
 
 
@@ -334,11 +341,17 @@ class SpacedDiffusion(GaussianDiffusion):
     """
 
     def __init__(self, use_timesteps, **kwargs):
+        print('use_timesteps = ', len(use_timesteps))
         self.use_timesteps = set(use_timesteps)
         self.timestep_map = []
         self.original_num_steps = len(kwargs["betas"])
 
+        print('original_num_steps = ', self.original_num_steps)
+        print('use_timesteps = ', self.use_timesteps)
+
         base_diffusion = GaussianDiffusion(**kwargs)  # pylint: disable=missing-kwoa
+
+        print('base_diffusion.alphas_cumprod = ', base_diffusion.alphas_cumprod.shape)
         last_alpha_cumprod = 1.0
         new_betas = []
         for i, alpha_cumprod in enumerate(base_diffusion.alphas_cumprod):
@@ -346,7 +359,9 @@ class SpacedDiffusion(GaussianDiffusion):
                 new_betas.append(1 - alpha_cumprod / last_alpha_cumprod)
                 last_alpha_cumprod = alpha_cumprod
                 self.timestep_map.append(i)
+
         kwargs["betas"] = np.array(new_betas)
+        print('new_betas = ', kwargs["betas"].shape)
         super().__init__(**kwargs)
 
     def p_mean_variance(
@@ -388,7 +403,10 @@ class _WrappedModel:
         map_tensor = torch.tensor(self.timestep_map, device=ts.device, dtype=ts.dtype)
         new_ts = map_tensor[ts]
         if self.rescale_timesteps:
+            print('t = ', ts)
+            print('num_timesteps = ', self.original_num_steps)
             new_ts = new_ts.float() * (1000.0 / self.original_num_steps)
+            print('new_ts = ', new_ts)
         return self.model(x, new_ts, **kwargs)
 
 
@@ -480,7 +498,7 @@ class TTC_DDPM(DDPM):
                 denoised_candidates = denoised_candidates[rs_particles]
                 prev_costs = prev_costs[rs_particles]
 
-        print('prev_costs = ', prev_costs)
+            print('prev_costs = ', prev_costs)
                 
         # Update the costs
         Ax = operator.forward(denoised_candidates)
@@ -489,7 +507,7 @@ class TTC_DDPM(DDPM):
 
         B, C, H, W = denoised_candidates.shape
 
-        curr_costs = torch.linalg.norm(delta, dim=-1, ord=1) / (C * H * W)
+        curr_costs = torch.linalg.norm(delta, dim=-1, ord=1)**2 / (C * H * W)
 
         if potential_type == 'mean':
             if prev_costs == None:
@@ -508,6 +526,7 @@ class TTC_DDPM(DDPM):
             else:
                 net_costs = curr_costs - prev_costs
         elif potential_type == "curr":
+            print('Using only current costs.')
             net_costs = curr_costs    
         else:
             raise NotImplementedError
@@ -527,13 +546,14 @@ class TTC_DDPM(DDPM):
                       operator,
                       potential_type='min',
                       resample_every_steps=10,
-                      rs_temp=0.1):
+                      rs_temp=0.1,
+                      **kwargs):
         """
         The function used for sampling from noise.
         """ 
         img = x_start
         device = x_start.device
-        resample_every_steps = 10
+        resample_every_steps = 20
 
         B, C, H, W = img.shape
 
@@ -560,6 +580,11 @@ class TTC_DDPM(DDPM):
             img = img.detach_()  # Proposed samples
 
             print('potential_type = ', potential_type)
+
+            # Get a cosine schedule for the rs_temp for high to low
+            rs_temp = 10 + np.sin(0.5 * np.pi * idx / self.num_timesteps) * 5
+
+            print('rs_temp = ', rs_temp)
 
             img, costs = self.resample_update(candidates=img,
                                         denoised_candidates=out['pred_xstart'], 
