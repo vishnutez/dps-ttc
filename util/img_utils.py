@@ -45,8 +45,15 @@ def clear(x):
 def clear_color(x):
     if torch.is_complex(x):
         x = torch.abs(x)
-    x = x.detach().cpu().squeeze().numpy()
-    return normalize_np(np.transpose(x, (1, 2, 0)))
+
+    if x.shape[1] == 3:
+        x = x.detach().cpu().squeeze().numpy()
+        return normalize_np(np.transpose(x, (1, 2, 0)))
+    elif x.shape[1] == 1:
+        x = x.detach().cpu().squeeze().numpy()
+        return normalize_np(x)
+    else:
+        raise NotImplementedError
 
 
 def normalize_np(img):

@@ -27,13 +27,21 @@ class ConditioningMethod(ABC):
         return self.operator.project(data=data, measurement=noisy_measurement, **kwargs)
     
     def grad_and_value(self, x_prev, x_0_hat, measurement, **kwargs):
+
         if self.noiser.__name__ == 'gaussian': 
-            Ax = self.operator.forward(x_0_hat, **kwargs)  # Forward operation is 
+            Ax = self.operator.forward(x_0_hat, **kwargs)
             difference = measurement - Ax
             difference_reshaped = difference.reshape(difference.shape[0], -1)  # Reshape to flatten the image dimensions
-            print('l1 = ', self.l1)
-            norm = (1-self.l1) * torch.linalg.norm(difference_reshaped, dim=-1) + self.l1* torch.linalg.norm(difference_reshaped, dim=-1, ord=1) # Norm is of shape batch_size
-            norm_grad = torch.autograd.grad(outputs=norm.sum(), inputs=x_prev)[0]
+            norm = torch.linalg.norm(difference_reshaped, dim=-1)
+
+            norm_exp = kwargs.get('norm_exp', 1)
+            if norm_exp == 2:
+                print('Doing norm^2')
+                norm_power = norm**2  
+            else:
+                print('Doing norm')
+                norm_power = norm 
+            norm_grad = torch.autograd.grad(outputs=norm_power.sum(), inputs=x_prev)[0]
         
         elif self.noiser.__name__ == 'poisson':
             Ax = self.operator.forward(x_0_hat, **kwargs)  
@@ -83,14 +91,32 @@ class ManifoldConstraintGradient(ConditioningMethod):
 class PosteriorSampling(ConditioningMethod):
     def __init__(self, operator, noiser, **kwargs):
         super().__init__(operator, noiser)
-        self.scale = kwargs.get('scale', 5.0)
-        self.l1 = kwargs.get('l1', 0.0)
-        print('scale = ', self.scale)
+        self.scale = kwargs.get('scale', 0.3)
+        self.operator_name = operator.name
 
     def conditioning(self, x_prev, x_t, x_0_hat, measurement, **kwargs):
         norm_grad, norm = self.grad_and_value(x_prev=x_prev, x_0_hat=x_0_hat, measurement=measurement, **kwargs)
         x_t -= norm_grad * self.scale
-        return x_t, norm
+        # Net scaling is computed with respect to the norm^2
+        net_scaling = self.scale / 2 / norm
+        return x_t, norm, net_scaling
+    
+@register_conditioning_method(name='ps_anneal')
+class PosterorSamplingAnnealing(ConditioningMethod):
+    def __init__(self, operator, noiser, **kwargs):
+        super().__init__(operator, noiser)
+        self.noise_sigma = max(noiser.sigma, 0.05)
+        self.scale = kwargs.get('scale', 0.3)
+        self.operator_name = operator.name
+
+    def conditioning(self, x_prev, x_t, x_0_hat, measurement, **kwargs):
+        beta_scale = kwargs.get('beta_scale', self.scale)
+        anneal = kwargs.get('anneal', 1.0)
+        net_scaling =  torch.tensor(beta_scale / (anneal * self.noise_sigma**2)).to(x_t.device)
+        norm_power_grad, norm = self.grad_and_value(x_prev=x_prev, x_0_hat=x_0_hat, measurement=measurement, norm_exp=2, **kwargs)  # norm_exp=2 for ps_anneal
+        x_t -= net_scaling * norm_power_grad
+        return x_t, norm, net_scaling
+    
         
 @register_conditioning_method(name='ps+')
 class PosteriorSamplingPlus(ConditioningMethod):
@@ -106,7 +132,10 @@ class PosteriorSamplingPlus(ConditioningMethod):
             x_0_hat_noise = x_0_hat + 0.05 * torch.rand_like(x_0_hat)
             difference = measurement - self.operator.forward(x_0_hat_noise)
             norm += torch.linalg.norm(difference) / self.num_sampling
-        
+
         norm_grad = torch.autograd.grad(outputs=norm, inputs=x_prev)[0]
         x_t -= norm_grad * self.scale
         return x_t, norm
+    
+
+

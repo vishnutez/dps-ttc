@@ -4,6 +4,10 @@ results/
 results_pathwise/
 old_results/
 old_logs/
+logs/
+misc_plots/
+results_annealing/
+results_annealing_exp/
 
 # Ignore the bkse, motionblur
 bkse/

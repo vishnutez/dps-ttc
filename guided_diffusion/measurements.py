@@ -33,6 +33,8 @@ def get_operator(name: str, **kwargs):
 
 
 class LinearOperator(ABC):
+    def __init__(self):
+        self.name = 'linear'
     @abstractmethod
     def forward(self, data, **kwargs):
         # calculate A * X
@@ -55,6 +57,7 @@ class LinearOperator(ABC):
 @register_operator(name='noise')
 class DenoiseOperator(LinearOperator):
     def __init__(self, device):
+        self.name = 'noise'
         self.device = device
     
     def forward(self, data):
@@ -76,6 +79,7 @@ class SuperResolutionOperator(LinearOperator):
         self.device = device
         self.up_sample = partial(F.interpolate, scale_factor=scale_factor)
         self.down_sample = Resizer(in_shape, 1/scale_factor).to(device)
+        self.name = 'super_resolution'
 
     def forward(self, data, **kwargs):
         return self.down_sample(data)
@@ -89,6 +93,7 @@ class SuperResolutionOperator(LinearOperator):
 @register_operator(name='motion_blur')
 class MotionBlurOperator(LinearOperator):
     def __init__(self, kernel_size, intensity, device):
+        self.name = 'motion_blur'
         self.device = device
         self.kernel_size = kernel_size
         self.conv = Blurkernel(blur_type='motion',
@@ -108,13 +113,23 @@ class MotionBlurOperator(LinearOperator):
         return data
 
     def get_kernel(self):
-        kernel = self.kernel.kernelMatrix.type(torch.float32).to(self.device)
+        kernel = torch.from_numpy(self.kernel.kernelMatrix).type(torch.float32).to(self.device)
         return kernel.view(1, 1, self.kernel_size, self.kernel_size)
+    
+    def set_kernel(self, kernel):
+        """
+        Set the kernel for motion blur
+        :kernel: np.array of size ksize x ksize
+        """
+        # self.kernel.kernelMatrix = kernel
+        kernel_in = torch.tensor(kernel, dtype=torch.float32).T
+        self.conv.update_weights(kernel_in)
 
 
 @register_operator(name='gaussian_blur')
 class GaussialBlurOperator(LinearOperator):
     def __init__(self, kernel_size, intensity, device):
+        self.name = 'gaussian_blur'
         self.device = device
         self.kernel_size = kernel_size
         self.conv = Blurkernel(blur_type='gaussian',
@@ -138,6 +153,7 @@ class InpaintingOperator(LinearOperator):
     '''This operator get pre-defined mask and return masked image.'''
     def __init__(self, device):
         self.device = device
+        self.name = 'inpainting'
     
     def forward(self, data, **kwargs):
         try:
@@ -165,6 +181,7 @@ class PhaseRetrievalOperator(NonLinearOperator):
     def __init__(self, oversample, device):
         self.pad = int((oversample / 8.0) * 256)
         self.device = device
+        self.name = 'phase_retrieval'
         
     def forward(self, data, **kwargs):
         padded = F.pad(data, (self.pad, self.pad, self.pad, self.pad))
@@ -174,6 +191,7 @@ class PhaseRetrievalOperator(NonLinearOperator):
 @register_operator(name='nonlinear_blur')
 class NonlinearBlurOperator(NonLinearOperator):
     def __init__(self, opt_yml_path, device):
+        self.name = 'nonlinear_blur'
         self.device = device
         self.blur_model = self.prepare_nonlinear_blur_model(opt_yml_path)     
          

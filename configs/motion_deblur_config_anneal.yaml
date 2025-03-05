@@ -1,7 +1,7 @@
 conditioning:
-  method: ps
+  method: ps_anneal
   params:
-    scale: 1.0
+    scale: 0.3
 
 data:
   name: ffhq
