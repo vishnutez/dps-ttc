@@ -8,6 +8,7 @@ logs/
 misc_plots/
 results_annealing/
 results_annealing_exp/
+results_search/
 
 # Ignore the bkse, motionblur
 bkse/

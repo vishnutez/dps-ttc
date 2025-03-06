@@ -1,4 +1,4 @@
-sampler: ddpm
+sampler: search_ddpm
 steps: 1000
 noise_schedule: linear
 model_mean_type: epsilon 

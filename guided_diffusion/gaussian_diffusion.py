@@ -487,8 +487,8 @@ class DDIM(SpacedDiffusion):
         return (coef1 * x_t - pred_xstart) / coef2
     
 
-@register_sampler(name='ttc_ddpm')
-class TTC_DDPM(DDPM): 
+@register_sampler(name='search_ddpm')
+class SearchDDPM(DDPM): 
 
     @torch.no_grad()
     def resample_update(self, 
@@ -595,45 +595,49 @@ class TTC_DDPM(DDPM):
             # time = torch.tensor([idx] * img.shape[0], device=device)  # TODO: check this line
 
             time = torch.tensor([idx] * 1, device=device)
+
+            with torch.no_grad():
+                out = self.p_sample(x=img, t=time, model=model)
+
+            img = out['sample']  # Proposed samples
+
+            print('img requires grad = ', img.requires_grad)
             
-            img = img.requires_grad_()
-            out = self.p_sample(x=img, t=time, model=model)
-            
-            # Give condition.
-            noisy_measurement = self.q_sample(measurement, t=time)
+            # # Give condition.
+            # noisy_measurement = self.q_sample(measurement, t=time)
 
-            # TODO: how can we handle argument for different condition method?
-            img, distance = measurement_cond_fn(x_t=out['sample'],
-                                      measurement=measurement,
-                                      noisy_measurement=noisy_measurement,
-                                      x_prev=img,
-                                      x_0_hat=out['pred_xstart'])
-            img = img.detach_()  # Proposed samples
+            # # TODO: how can we handle argument for different condition method?
+            # img, distance = measurement_cond_fn(x_t=out['sample'],
+            #                           measurement=measurement,
+            #                           noisy_measurement=noisy_measurement,
+            #                           x_prev=img,
+            #                           x_0_hat=out['pred_xstart'])
+            # img = img.detach_()  # Proposed samples
 
-            print('potential_type = ', potential_type)
+            # print('potential_type = ', potential_type)
 
-            # Get a cosine schedule for the rs_temp for high to low
-            rs_temp = 10 + np.sin(0.5 * np.pi * idx / self.num_timesteps) * 5
+            # # Get a cosine schedule for the rs_temp for high to low
+            # rs_temp = 10 + np.sin(0.5 * np.pi * idx / self.num_timesteps) * 5
 
-            print('rs_temp = ', rs_temp)
+            # print('rs_temp = ', rs_temp)
 
-            img, costs = self.resample_update(candidates=img,
-                                        denoised_candidates=out['pred_xstart'], 
-                                        prev_costs=costs,
-                                        operator=operator, 
-                                        measurement=measurement, 
-                                        rs_temp=rs_temp,
-                                        resample=idx % resample_every_steps == 0,
-                                        potential_type=potential_type, 
-                                        steps_done=idx+1)
+            # img, costs = self.resample_update(candidates=img,
+            #                             denoised_candidates=out['pred_xstart'], 
+            #                             prev_costs=costs,
+            #                             operator=operator, 
+            #                             measurement=measurement, 
+            #                             rs_temp=rs_temp,
+            #                             resample=idx % resample_every_steps == 0,
+            #                             potential_type=potential_type, 
+            #                             steps_done=idx+1)
            
-            pbar.set_postfix({'distance': distance.mean().item()}, refresh=False)
+            # pbar.set_postfix({'distance': distance.mean().item()}, refresh=False)
             if record:
                 if idx % 10 == 0:
                     file_path = os.path.join(save_root, f"progress/x_{str(idx).zfill(4)}.png")
                     plt.imsave(file_path, clear_color(img))
 
-        return img, distance
+        return img
     
 
 @register_sampler(name='ttc_ddim')
