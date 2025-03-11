@@ -32,7 +32,7 @@ def main():
     parser.add_argument('--diffusion_config', type=str)
     parser.add_argument('--task_config', type=str)
     parser.add_argument('--gpu', type=int, default=0)
-    parser.add_argument('--save_dir', type=str, default='./results_annealing_exp')
+    parser.add_argument('--save_dir', type=str, default='./results_ood')
     parser.add_argument('--n_data_samples', type=int, default=1)
     parser.add_argument('--n_paths', type=int, default=1)
     parser.add_argument('--resample_every_steps', type=int, default=10)
@@ -105,7 +105,7 @@ def main():
     # Working directory
     out_path = os.path.join(args.save_dir, dir_name)
     os.makedirs(out_path, exist_ok=True)
-    for img_dir in ['input', 'recon_paths', 'label']:
+    for img_dir in ['input', 'recon_paths', 'label', 'metrics']:
         os.makedirs(os.path.join(out_path, img_dir), exist_ok=True)
 
     # Prepare dataloader
@@ -129,10 +129,10 @@ def main():
     if measure_config['operator']['name'] == 'motion_blur':
         kernel = operator.get_kernel()
         print(kernel)
-        os.makedirs('../motion_blur_kernels_exp', exist_ok=True)
+        os.makedirs('../motion_blur_kernels_ood', exist_ok=True)
         kname = str(args.kernel_idx).zfill(5)
        
-        plt.imsave(os.path.join('../motion_blur_kernels_exp', f'{kname}.png'), clear_color(kernel))
+        plt.imsave(os.path.join('../motion_blur_kernels_ood', f'{kname}.png'), clear_color(kernel))
 
     # pathwise_psnr = np.zeros([args.n_data_samples, args.n_paths])
     # pathwise_lpips = np.zeros([args.n_data_samples, args.n_paths])
@@ -177,7 +177,7 @@ def main():
 
         for path_group_idx in range(args.n_paths // args.batch_size):
             x_start = torch.randn((args.batch_size, C, H, W), device=device).requires_grad_()
-            sample, sample_distance, scales, anneals = sample_fn(x_start=x_start, measurement=y_n, record=False, save_root=out_path)
+            sample = sample_fn(x_start=x_start, measurement=y_n, record=False, save_root=out_path)
 
             y_space = operator.forward(sample)
 
@@ -193,6 +193,10 @@ def main():
 
                 plt.imsave(os.path.join(out_path, 'recon_paths', f'{fname}', f'path#{path_idx + 1}' + '.png'), clear_color(sample[sample_idx].unsqueeze(0)))
                 plt.imsave(os.path.join(out_path, 'recon_paths_y', f'{fname}', f'path#{path_idx + 1}_y_space' + '.png'), clear_color(y_space[sample_idx].unsqueeze(0)))
+
+                # Save the metrics as .csv files
+                with open(os.path.join(out_path, 'metrics', f'metrics_{fname}.csv'), 'a') as f:
+                    f.write(f"Path#{path_idx}, PSNR: {psnr}, LPIPS: {lpips} \n")
 
                 # # Add title and save the best sample
                 # plt.imshow(clear_color(sample[sample_idx].unsqueeze(0)))
@@ -227,20 +231,20 @@ def main():
         # np.save(os.path.join(out_path, 'pathwise_psnr.npy'), pathwise_psnr)
         # np.save(os.path.join(out_path, 'pathwise_lpips.npy'), pathwise_lpips)
 
-        plt.close()
-        steps = np.arange(diffusion_config['steps']-1, -1, -1)
-        for n in range(len(scales)):
-            plt.plot(steps, scales[n], label=f'Path: {n+1}')
-        plt.ylabel('Guidance Scale')
-        plt.xlabel('Steps')
-        plt.legend()
+        # plt.close()
+        # steps = np.arange(diffusion_config['steps']-1, -1, -1)
+        # for n in range(len(scales)):
+        #     plt.plot(steps, scales[n], label=f'Path: {n+1}')
+        # plt.ylabel('Guidance Scale')
+        # plt.xlabel('Steps')
+        # plt.legend()
 
-        if task_config['conditioning']['method'] == 'ps_anneal':
-            np.save(os.path.join(out_path, 'dps_anneal_guidance_scales.npy'), scales)
-            plt.savefig(os.path.join(out_path, 'dps_anneal_guidance_scales.png'))
-        else:
-            np.save(os.path.join(out_path, 'dps_guidance_scales.npy'), scales)  # Save the guidance scales for the DPS
-            plt.savefig(os.path.join(out_path, 'dps_guidance_scales.png'))
+        # if task_config['conditioning']['method'] == 'ps_anneal':
+        #     np.save(os.path.join(out_path, 'dps_anneal_guidance_scales.npy'), scales)
+        #     plt.savefig(os.path.join(out_path, 'dps_anneal_guidance_scales.png'))
+        # else:
+        #     np.save(os.path.join(out_path, 'dps_guidance_scales.npy'), scales)  # Save the guidance scales for the DPS
+        #     plt.savefig(os.path.join(out_path, 'dps_guidance_scales.png'))
         
 
 if __name__ == '__main__':

@@ -1,12 +1,12 @@
 conditioning:
   method: ps
   params:
-    scale: 1.0
+    scale: 2.0
 
 data:
   name: ffhq
   # root: ./data/samples/
-  root: ../data/ffhq256/
+  root: ../facedata-preprocessed/
 
 measurement:
   operator:
@@ -16,4 +16,4 @@ measurement:
 
   noise: 
     name: gaussian
-    sigma: 0.05
+    sigma: 0.0

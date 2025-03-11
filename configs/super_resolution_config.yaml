@@ -6,7 +6,7 @@ conditioning:
 data:
   name: ffhq
   # root: ./data/samples/
-  root: ../data/ffhq256/
+  root: ../facedata-preprocessed/
 
 measurement:
   operator:

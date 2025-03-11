@@ -13,3 +13,4 @@ results_search/
 # Ignore the bkse, motionblur
 bkse/
 motionblur/
+results_ood/

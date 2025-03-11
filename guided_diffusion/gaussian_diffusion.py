@@ -270,7 +270,7 @@ class GaussianDiffusion:
                     file_path = os.path.join(save_root, f"progress/x_{str(idx).zfill(4)}.png")
                     plt.imsave(file_path, clear_color(img))
 
-        return img, distance, scales, anneals  
+        return img  
         
     def p_sample(self, model, x, t):
         raise NotImplementedError
