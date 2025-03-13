@@ -9,8 +9,9 @@ misc_plots/
 results_annealing/
 results_annealing_exp/
 results_search/
+results_ood/
 
-# Ignore the bkse, motionblur
+# Ignore the bkse, motionblur, facenet_pytorch folders
 bkse/
 motionblur/
-results_ood/
+facenet_pytorch/

@@ -18,6 +18,7 @@ from util.img_utils import clear_color, mask_generator
 from util.logger import get_logger
 
 import numpy as np
+import PIL.Image as Image
 
 
 def load_yaml(file_path: str) -> dict:
@@ -45,6 +46,7 @@ def main():
     parser.add_argument('--anneal_amp', type=float, default=1)
     parser.add_argument('--anneal_loc', type=float, default=0.5)
     parser.add_argument('--kernel_idx', type=int, default=0)
+    parser.add_argument('--guid_image_idx', type=int, default=2)
     args = parser.parse_args()
    
     # logger
@@ -77,7 +79,16 @@ def main():
 
     # Prepare conditioning method
     cond_config = task_config['conditioning']
-    cond_method = get_conditioning_method(cond_config['method'], operator, noiser, **cond_config['params'])
+
+    # Load the guidance image
+    guid_filename = str(args.guid_image_idx).zfill(4)
+    guid_image = Image.open(f'../facedata-preprocessed/{guid_filename}.png')
+
+    # # Convert to Floattensor
+    # guid_image = transforms.ToTensor()(guid_image).unsqueeze(0).to(device)
+
+    # Pass the guidance image
+    cond_method = get_conditioning_method(cond_config['method'], operator, noiser, guid_image=guid_image, **cond_config['params'])
     measurement_cond_fn = cond_method.conditioning
     logger.info(f"Conditioning method : {task_config['conditioning']['method']}")
 
@@ -97,15 +108,20 @@ def main():
                         anneal_amp=args.anneal_amp,)
 
     # Directory name
+    scale_factor = measure_config['operator'].get('scale_factor', 1)
+    print('scale_factor = ', scale_factor)
+
     if cond_config['method'] == 'ps_anneal':
         dir_name = f"{measure_config['operator']['name']}_noise_sigma_{measure_config['noise']['sigma']}_dps_anneal_amp_{args.anneal_amp}"
+    if cond_config['method'] == 'ps_semantic':
+        dir_name = f"{measure_config['operator']['name']}_noise_sigma_{measure_config['noise']['sigma']}_{scale_factor}x_norm2_dps_semantic_scale_{cond_config['params']['sem_guid_scale']}_guid_scale_{cond_config['params']['scale']}"
     else:
-        dir_name = f"{measure_config['operator']['name']}_noise_sigma_{measure_config['noise']['sigma']}_dps_scale_{cond_config['params']['scale']}"
+        dir_name = f"{measure_config['operator']['name']}_noise_sigma_{measure_config['noise']['sigma']}_{scale_factor}x_dps_scale_{cond_config['params']['scale']}"
    
     # Working directory
     out_path = os.path.join(args.save_dir, dir_name)
     os.makedirs(out_path, exist_ok=True)
-    for img_dir in ['input', 'recon_paths', 'label', 'metrics']:
+    for img_dir in ['input', 'recon_paths', 'label', 'metrics', 'progress']:
         os.makedirs(os.path.join(out_path, img_dir), exist_ok=True)
 
     # Prepare dataloader

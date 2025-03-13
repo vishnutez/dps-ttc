@@ -233,7 +233,7 @@ class GaussianDiffusion:
             # if idx <= no_guidance_steps:
             # print("Performing guidance.")
             # TODO: how can we handle argument for different condition method?
-            img, distance, net_scaling = measurement_cond_fn(x_t=out['sample'],
+            img, measurement_distance, semantic_distance = measurement_cond_fn(x_t=out['sample'],
                                     measurement=measurement,
                                     noisy_measurement=noisy_measurement,
                                     x_prev=img,
@@ -241,7 +241,7 @@ class GaussianDiffusion:
                                     beta_scale=beta_scale,
                                     anneal=anneal)
 
-            scales[:, idx] = net_scaling.detach().cpu().numpy()
+            # scales[:, idx] = net_scaling.detach().cpu().numpy()
             
             # else:
             #     # Compute the distance
@@ -262,13 +262,15 @@ class GaussianDiffusion:
 
             img = img.detach_()
 
-            distances[:, self.num_timesteps-idx-1] = distance.detach().cpu().numpy()
+            distances[:, self.num_timesteps-idx-1] = measurement_distance.detach().cpu().numpy()
            
-            pbar.set_postfix({'distance': distance.mean().item()}, refresh=False)
+            pbar.set_postfix({'measurement': measurement_distance.mean().item(), 'semantic': semantic_distance.mean().item()}, refresh=False)
             if record:
                 if idx % 10 == 0:
+                    x0_hat = out['pred_xstart']
+                    print('shape = ', x0_hat.shape)
                     file_path = os.path.join(save_root, f"progress/x_{str(idx).zfill(4)}.png")
-                    plt.imsave(file_path, clear_color(img))
+                    plt.imsave(file_path, clear_color(x0_hat[0].unsqueeze(0)))
 
         return img  
         
@@ -359,7 +361,6 @@ def space_timesteps(num_timesteps, section_counts):
             cur_idx += frac_stride
         all_steps += taken_steps
         start_idx += size
-    print('all_steps = ', all_steps)
     return set(all_steps)
 
 
@@ -372,17 +373,10 @@ class SpacedDiffusion(GaussianDiffusion):
     """
 
     def __init__(self, use_timesteps, **kwargs):
-        print('use_timesteps = ', len(use_timesteps))
         self.use_timesteps = set(use_timesteps)
         self.timestep_map = []
         self.original_num_steps = len(kwargs["betas"])
-
-        print('original_num_steps = ', self.original_num_steps)
-        print('use_timesteps = ', self.use_timesteps)
-
         base_diffusion = GaussianDiffusion(**kwargs)  # pylint: disable=missing-kwoa
-
-        print('base_diffusion.alphas_cumprod = ', base_diffusion.alphas_cumprod.shape)
         last_alpha_cumprod = 1.0
         new_betas = []
         for i, alpha_cumprod in enumerate(base_diffusion.alphas_cumprod):
@@ -729,7 +723,6 @@ def get_named_beta_schedule(schedule_name, num_diffusion_timesteps):
         scale = 1000 / num_diffusion_timesteps
         beta_start = scale * 0.0001
         beta_end = scale * 0.02
-        print('In linear beta schedule')
         return np.linspace(
             beta_start, beta_end, num_diffusion_timesteps, dtype=np.float64
         )
