@@ -1,13 +1,13 @@
 conditioning:
   method: ps_semantic
   params:
-    scale: 1.0
-    sem_guid_scale: 1.0
+    scale: 0.3
+    sem_guid_scale: 0.8
 
 data:
   name: ffhq
   # root: ./data/samples/
-  root: ../facedata-preprocessed/
+  root: ../ref_images/
 
 measurement:
   operator:

@@ -20,6 +20,8 @@ from util.logger import get_logger
 import numpy as np
 import PIL.Image as Image
 
+import pandas as pd
+
 
 def load_yaml(file_path: str) -> dict:
     with open(file_path) as f:
@@ -33,7 +35,7 @@ def main():
     parser.add_argument('--diffusion_config', type=str)
     parser.add_argument('--task_config', type=str)
     parser.add_argument('--gpu', type=int, default=0)
-    parser.add_argument('--save_dir', type=str, default='./results_ood')
+    parser.add_argument('--save_dir', type=str, default='./results_semantic_norm2_anneal_10x_n_guid_images_4')
     parser.add_argument('--n_data_samples', type=int, default=1)
     parser.add_argument('--n_paths', type=int, default=1)
     parser.add_argument('--resample_every_steps', type=int, default=10)
@@ -46,7 +48,12 @@ def main():
     parser.add_argument('--anneal_amp', type=float, default=1)
     parser.add_argument('--anneal_loc', type=float, default=0.5)
     parser.add_argument('--kernel_idx', type=int, default=0)
-    parser.add_argument('--guid_image_idx', type=int, default=2)
+    parser.add_argument('--guid_image_idx', type=int, default=3)
+    parser.add_argument('--n_guid_images', type=int, default=1)
+    parser.add_argument('--sem_scale', type=float, default=0.1)
+    parser.add_argument('--measurement_scale', type=float, default=0.3)
+    parser.add_argument('--anneal_factor', type=float, default=10.0)
+    parser.add_argument('--record', action='store_true')
     args = parser.parse_args()
    
     # logger
@@ -79,16 +86,20 @@ def main():
 
     # Prepare conditioning method
     cond_config = task_config['conditioning']
+    cond_config['params'['sem_guid_scale']] = args.sem_scale
+    cond_config['params'['scale']] = args.measurement_scale
+    cond_config['params'['anneal_factor']] = args.anneal_factor
+    cond_config['params'['do_anneal']] = args.do_anneal
 
     # Load the guidance image
-    guid_filename = str(args.guid_image_idx).zfill(4)
-    guid_image = Image.open(f'../facedata-preprocessed/{guid_filename}.png')
-
-    # # Convert to Floattensor
-    # guid_image = transforms.ToTensor()(guid_image).unsqueeze(0).to(device)
+    guid_images = []
+    for i in range(args.n_guid_images):
+        guid_filename = str(args.guid_image_idx + i).zfill(4)
+        guid_image = Image.open(f'../guidance_images/{guid_filename}.png')
+        guid_images.append(guid_image)
 
     # Pass the guidance image
-    cond_method = get_conditioning_method(cond_config['method'], operator, noiser, guid_image=guid_image, **cond_config['params'])
+    cond_method = get_conditioning_method(cond_config['method'], operator, noiser, guid_images=guid_images, **cond_config['params'])
     measurement_cond_fn = cond_method.conditioning
     logger.info(f"Conditioning method : {task_config['conditioning']['method']}")
 
@@ -111,17 +122,16 @@ def main():
     scale_factor = measure_config['operator'].get('scale_factor', 1)
     print('scale_factor = ', scale_factor)
 
-    if cond_config['method'] == 'ps_anneal':
-        dir_name = f"{measure_config['operator']['name']}_noise_sigma_{measure_config['noise']['sigma']}_dps_anneal_amp_{args.anneal_amp}"
-    if cond_config['method'] == 'ps_semantic':
-        dir_name = f"{measure_config['operator']['name']}_noise_sigma_{measure_config['noise']['sigma']}_{scale_factor}x_norm2_dps_semantic_scale_{cond_config['params']['sem_guid_scale']}_guid_scale_{cond_config['params']['scale']}"
-    else:
-        dir_name = f"{measure_config['operator']['name']}_noise_sigma_{measure_config['noise']['sigma']}_{scale_factor}x_dps_scale_{cond_config['params']['scale']}"
+    # if cond_config['method'] == 'ps_anneal':
+    #     dir_name = f"{measure_config['operator']['name']}_noise_sigma_{measure_config['noise']['sigma']}_dps_anneal_amp_{args.anneal_amp}"
+    # else:
+
+    dir_name = f"{measure_config['operator']['name']}_semantic_{cond_config['params']['sem_guid_scale']}_measurement_{cond_config['params']['scale']}"
    
     # Working directory
     out_path = os.path.join(args.save_dir, dir_name)
     os.makedirs(out_path, exist_ok=True)
-    for img_dir in ['input', 'recon_paths', 'label', 'metrics', 'progress']:
+    for img_dir in ['input', 'recon_paths', 'label', 'progress']:
         os.makedirs(os.path.join(out_path, img_dir), exist_ok=True)
 
     # Prepare dataloader
@@ -192,8 +202,11 @@ def main():
         plt.imsave(os.path.join(out_path, 'label', fname + '.png'), clear_color(ref_img))
 
         for path_group_idx in range(args.n_paths // args.batch_size):
+            path_curr_group_idx = args.path_start_idx + path_group_idx * args.batch_size
+            if args.record:
+                os.makedirs(os.path.join(out_path, 'progress', f'path#{path_curr_group_idx + 1}'), exist_ok=True)
             x_start = torch.randn((args.batch_size, C, H, W), device=device).requires_grad_()
-            sample = sample_fn(x_start=x_start, measurement=y_n, record=False, save_root=out_path)
+            sample, measurement_distance, semantic_distance = sample_fn(x_start=x_start, measurement=y_n, record=args.record, save_root=out_path, path_curr_group_idx=path_curr_group_idx)
 
             y_space = operator.forward(sample)
 
@@ -203,65 +216,32 @@ def main():
 
                 path_idx = args.path_start_idx + path_group_idx * args.batch_size + sample_idx
 
-                psnr = compute_psnr(ref_img, sample[sample_idx].unsqueeze(0))
-                lpips = compute_lpips(ref_img, sample[sample_idx].unsqueeze(0))
-                logger.info(f"Path#{path_idx + 1} | Method:{diffusion_config['sampler']} / PSNR: {psnr} / LPIPS: {lpips}")
+                psnr = compute_psnr(ref_img, sample[sample_idx].unsqueeze(0)).cpu().numpy()
+                lpips = compute_lpips(ref_img, sample[sample_idx].unsqueeze(0)).cpu().numpy()
+                logger.info(f"Path#{path_idx} | Method:{diffusion_config['sampler']} / PSNR: {psnr} / LPIPS: {lpips}")
 
-                plt.imsave(os.path.join(out_path, 'recon_paths', f'{fname}', f'path#{path_idx + 1}' + '.png'), clear_color(sample[sample_idx].unsqueeze(0)))
-                plt.imsave(os.path.join(out_path, 'recon_paths_y', f'{fname}', f'path#{path_idx + 1}_y_space' + '.png'), clear_color(y_space[sample_idx].unsqueeze(0)))
+                plt.imsave(os.path.join(out_path, 'recon_paths', f'{fname}', f'path#{path_idx}' + '.png'), clear_color(sample[sample_idx].unsqueeze(0)))
+                plt.imsave(os.path.join(out_path, 'recon_paths_y', f'{fname}', f'path#{path_idx}_y_space' + '.png'), clear_color(y_space[sample_idx].unsqueeze(0)))
 
-                # Save the metrics as .csv files
-                with open(os.path.join(out_path, 'metrics', f'metrics_{fname}.csv'), 'a') as f:
-                    f.write(f"Path#{path_idx}, PSNR: {psnr}, LPIPS: {lpips} \n")
+                curr_measurement_distance = measurement_distance[sample_idx].detach().cpu().numpy()
+                curr_semantic_distance = semantic_distance[sample_idx].detach().cpu().numpy()
 
-                # # Add title and save the best sample
-                # plt.imshow(clear_color(sample[sample_idx].unsqueeze(0)))
-                # plt.title(f"Path#{path_idx + 1} | PSNR: {psnr:.4f} LPIPS: {lpips:.4f} Distance: {sample_distance[sample_idx]:.4f}")
-                # plt.axis('off')
-                # # Save the plt
-                # plt.savefig(os.path.join(out_path, f'recon_paths/{fname}', f'path#{path_idx + 1}' + '.png'))
-                # plt.close()
+                print('curr_measurement_distance = ', curr_measurement_distance)
+                print('curr_semantic_distance = ', curr_semantic_distance)
 
-                # pathwise_distances[args.start_idx + img_idx, path_idx] = sample_distance[sample_idx]
-                # pathwise_psnr[args.start_idx + img_idx, path_idx] = psnr
-                # pathwise_lpips[args.start_idx + img_idx, path_idx] = lpips
-
-                # # Open the file quantitative results and write the results
-                # with open(os.path.join(out_path, f'{fname}_pathwise.txt'), 'a') as f:
-                #     f.write(f"Path#{path_idx}, PSNR: {psnr}, LPIPS: {lpips}, Distance: {sample_distance[sample_idx]} \n")
-
-        # avg_psnr /= args.n_data_samples
-        # avg_lpips /= args.n_data_samples
-
-        # logger.info(f"Average PSNR: {avg_psnr} / Average LPIPS: {avg_lpips}")
-
-        # # Open the file quantitative results and write the results
-        # with open(os.path.join(out_path, 'quantitative_results.txt'), 'w') as f:
-        #     f.write(f"Average PSNR: {avg_psnr}, Average LPIPS: {avg_lpips}")
-
-        # Compute the norm of the true image with observation
+                # Dataframe
+                df = pd.DataFrame({'Image': [args.start_idx + img_idx], \
+                                   'Semantic Guidance Scale': [cond_config['params']['sem_guid_scale']], \
+                                   'Measurement Guidance Scale': [cond_config['params']['scale']], \
+                                   'Path': [path_idx], 'PSNR': [psnr], \
+                                   'LPIPS': [lpips], \
+                                   'Measurement Distance': [curr_measurement_distance], \
+                                   'Semantic Distance': [curr_semantic_distance]})
+                df.to_csv(os.path.join(args.save_dir, f'metrics.csv'), mode='a', header=True, index=True)
 
         print('true_norm = ', true_norm)
 
-        # np.save(os.path.join(out_path, 'pathwise_distances.npy'), pathwise_distances)
-        # np.save(os.path.join(out_path, 'pathwise_psnr.npy'), pathwise_psnr)
-        # np.save(os.path.join(out_path, 'pathwise_lpips.npy'), pathwise_lpips)
 
-        # plt.close()
-        # steps = np.arange(diffusion_config['steps']-1, -1, -1)
-        # for n in range(len(scales)):
-        #     plt.plot(steps, scales[n], label=f'Path: {n+1}')
-        # plt.ylabel('Guidance Scale')
-        # plt.xlabel('Steps')
-        # plt.legend()
-
-        # if task_config['conditioning']['method'] == 'ps_anneal':
-        #     np.save(os.path.join(out_path, 'dps_anneal_guidance_scales.npy'), scales)
-        #     plt.savefig(os.path.join(out_path, 'dps_anneal_guidance_scales.png'))
-        # else:
-        #     np.save(os.path.join(out_path, 'dps_guidance_scales.npy'), scales)  # Save the guidance scales for the DPS
-        #     plt.savefig(os.path.join(out_path, 'dps_guidance_scales.png'))
-        
 
 if __name__ == '__main__':
     main()

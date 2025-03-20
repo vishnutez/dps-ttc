@@ -6,12 +6,25 @@ old_results/
 old_logs/
 logs/
 misc_plots/
-results_annealing/
-results_annealing_exp/
-results_search/
-results_ood/
+semantic_guidance/
+semantic_guidance_old/
+results_hyper/
+figures/
+
+# results_annealing/
+# results_annealing_exp/
+# results_search/
+# results_ood/
+# results_semantic_norm/
+# results_semantic_norm2/
+# results_semantic_norm2_anneal_5x/
+# results_semantic_norm2_anneal_10x/
+# results_semantic_norm2_rescaled/
+
+
 
 # Ignore the bkse, motionblur, facenet_pytorch folders
 bkse/
 motionblur/
 facenet_pytorch/
+CVLface/

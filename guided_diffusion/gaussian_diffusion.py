@@ -180,6 +180,7 @@ class GaussianDiffusion:
         """
         The function used for sampling from noise.
         """ 
+
         img = x_start
         device = x_start.device
 
@@ -195,6 +196,8 @@ class GaussianDiffusion:
         anneals = np.zeros(self.num_timesteps)
         scales = np.zeros((x_start.shape[0], self.num_timesteps))
 
+        path_curr_group_idx = kwargs.get('path_curr_group_idx', 0)
+
         for idx in pbar:
             # time = torch.tensor([idx] * img.shape[0], device=device)  # TODO: check this line
 
@@ -205,33 +208,20 @@ class GaussianDiffusion:
             
             # Give condition.
             noisy_measurement = self.q_sample(measurement, t=time)
-
             beta_scale = self.betas[idx]
 
-            # print('beta_scale = ', beta_scale)
+            # # cosine schedule
+            # anneal_scale = kwargs.get('anneal_scale', 1)
+            # anneal_loc = kwargs.get('anneal_loc', 0.2)
+            # anneal_amp = kwargs.get('anneal_amp', 1)
 
-            # cosine schedule
+            # print('anneal_amp = ', anneal_amp)
 
-            anneal_scale = kwargs.get('anneal_scale', 1)
-            anneal_loc = kwargs.get('anneal_loc', 0.2)
-            anneal_amp = kwargs.get('anneal_amp', 1)
+            t = idx / self.num_timesteps  # Goes from 1 to zero
 
-            # print('anneal_scale = ', anneal_scale)
-            # print('anneal_loc = ', anneal_loc)
-            print('anneal_amp = ', anneal_amp)
+            # anneal = anneal_amp / (1 + math.exp(- anneal_scale * (t - anneal_loc)))
+            # anneals[idx] = anneal
 
-            t = 1 - idx / self.num_timesteps
-            # anneal = 1 + self.num_timesteps * math.exp(- 5 * t / tau)
-
-            # print('t in annealing = ', t)
-            # print('Using inverse sigmoid annealing.')
-
-            anneal = anneal_amp * self.num_timesteps / (1 + math.exp(anneal_scale * (t - anneal_loc)))  # For all except motion_deblur
-
-            anneals[idx] = anneal
-
-            # if idx <= no_guidance_steps:
-            # print("Performing guidance.")
             # TODO: how can we handle argument for different condition method?
             img, measurement_distance, semantic_distance = measurement_cond_fn(x_t=out['sample'],
                                     measurement=measurement,
@@ -239,25 +229,7 @@ class GaussianDiffusion:
                                     x_prev=img,
                                     x_0_hat=out['pred_xstart'],
                                     beta_scale=beta_scale,
-                                    anneal=anneal)
-
-            # scales[:, idx] = net_scaling.detach().cpu().numpy()
-            
-            # else:
-            #     # Compute the distance
-
-            #     operator = kwargs.get('operator', None)
-
-            #     if operator is not None:
-            #         print('Operator is given. The distance is calculated.')
-            #         Ax = operator.forward(out['pred_xstart'])
-            #         delta = measurement - Ax
-            #         delta = delta.reshape(x_start.shape[0], -1)
-
-            #         distance = torch.linalg.norm(delta, dim=-1, ord=1) / (x_start.shape[1] * x_start.shape[2] * x_start.shape[3])
-            #     else:   
-            #         print('No operator is given. The distance is set to 0.')
-            #         distance = torch.tensor([0.0] * x_start.shape[0])
+                                    t=t)
 
 
             img = img.detach_()
@@ -266,13 +238,13 @@ class GaussianDiffusion:
            
             pbar.set_postfix({'measurement': measurement_distance.mean().item(), 'semantic': semantic_distance.mean().item()}, refresh=False)
             if record:
-                if idx % 10 == 0:
+                if idx % 100 == 0:
                     x0_hat = out['pred_xstart']
                     print('shape = ', x0_hat.shape)
-                    file_path = os.path.join(save_root, f"progress/x_{str(idx).zfill(4)}.png")
+                    file_path = os.path.join(save_root, f"progress/path#{path_curr_group_idx + 1}/x_{str(idx).zfill(4)}.png")
                     plt.imsave(file_path, clear_color(x0_hat[0].unsqueeze(0)))
 
-        return img  
+        return img, measurement_distance, semantic_distance
         
     def p_sample(self, model, x, t):
         raise NotImplementedError

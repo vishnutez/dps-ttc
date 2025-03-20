@@ -1,8 +1,11 @@
 conditioning:
-  method: ps
+  method: ps_semantic
   params:
-    scale: 0.3
-    sem_guid_scale: 0.0
+    scale: 1.0
+    sem_guid_scale: 0.01
+    do_anneal: True
+    anneal_factor: 10.0
+    norm_exp: 1
 
 data:
   name: ffhq

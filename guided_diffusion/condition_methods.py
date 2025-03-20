@@ -113,48 +113,78 @@ class PosteriorSamplingSemanticGuid(ConditioningMethod):
 
         self.scale = kwargs.get('scale', 0.3)
         self.sem_guid_scale = kwargs.get('sem_guid_scale', 0.5)
+        self.anneal_factor = kwargs.get('anneal_factor', 1.0)
+        self.norm_exp = kwargs.get('norm_exp', 1)
 
-        guid_image = kwargs.get('guid_image', None)  # Pillow image
-        self.guid_image = guid_image
+        self.guid_images =  kwargs.get('guid_images', None)  # Pillow image
+        if self.guid_images is None or self.sem_guid_scale == 0:
+            print('No guidance images provided. Skipping semantic guidance.')
+            self.n_guid_images = 1
+        else:
+            self.n_guid_images = len(self.guid_images)
+            print('Number of guidance images:', self.n_guid_images)
+            device = 'cuda:0'
 
-        # Load the MTCNN and InceptionResnetV1 models
-        self.mtcnn = MTCNN(image_size=256, margin=10, min_face_size=20, device='cuda:0')  # Keep the default values
-        self.resnet = InceptionResnetV1(pretrained='vggface2', device='cuda:0').eval()
+            # Load the MTCNN and InceptionResnetV1 models
+            self.mtcnn = MTCNN(image_size=256, margin=10, min_face_size=20, device=device)  # Keep the default values
+            self.resnet = InceptionResnetV1(pretrained='vggface2', device=device).eval()
 
-        # Get cropped and prewhitened image tensor
-        with torch.no_grad():
-            guid_image_cropped = self.mtcnn(self.guid_image).unsqueeze(0).to('cuda:0')
-            print('guid_image_cropped shape:', guid_image_cropped.shape)
-            self.guid_image_emb = self.resnet(guid_image_cropped).detach()  # Used for semantic guidance
-            print('guid_image_emb shape:', self.guid_image_emb.shape)
+            # if len(self.guid_images) == 1:
+            #     self.guid_images = self.guid_images.unsqueeze(0)  # (H, W, C) -> (1, H, W, C)
+
+            # Get cropped and prewhitened image tensor
+            with torch.no_grad():
+                guid_image_cropped = self.mtcnn(self.guid_images)
+                guid_image_cropped = torch.stack(guid_image_cropped).to(device)
+                print('Guidance image shape:', guid_image_cropped.shape)
+                self.guid_image_emb = self.resnet(guid_image_cropped).unsqueeze(0)  # Used for semantic guidance
+                print('Guidance image embedding shape:', self.guid_image_emb.shape)
+        
     
 
     def measurement_semantic_guidance(self, x_prev, x_0_hat, measurement, **kwargs):
 
-        print('Adding semantic guidance')
-        # print('x_0_hat_cropped shape:', x_0_hat_cropped.shape)
-        x_0_hat_emb = self.resnet(x_0_hat)  # Get the embedding of the face
-        sem_diff = x_0_hat_emb - self.guid_image_emb  # Reshape to flatten the image dimensions (batch_size, emb_dim)
-        # Compute the semantic guidance
-        sem_guid_norm = torch.norm(sem_diff, dim=-1) # Compute the norm of the difference
+        
+
+        if self.sem_guid_scale == 0:
+            print('No semantic guidance')
+            sem_guid_norm = torch.tensor(0.0).to(x_0_hat.device)
+            sem_guid_scale_t = 0
+        else:
+            t = kwargs.get('t', 1)
+
+            import math
+            sem_guid_scale_t = self.sem_guid_scale * (1 + (self.anneal_factor - 1) / (1 + math.exp(- 10 * (0.3 - t))))  # If anneal_factor = 1, then sem_guid_scale_t = sem_guid_scale
+            print('sem_guid_scale_t:', sem_guid_scale_t)
+
+            x_0_hat_emb = self.resnet(x_0_hat)  # Get the embedding of the face
+            x_0_hat_emb = x_0_hat_emb.unsqueeze(1)  # (batch_size, emb_dim) -> (batch_size, 1, emb_dim)
+
+            print('x_0_hat_emb:', x_0_hat_emb.shape)
+
+            sem_diff = x_0_hat_emb - self.guid_image_emb  # Reshape to flatten the image dimensions (batch_size, emb_dim)
+            sem_diff = sem_diff.reshape(sem_diff.shape[0], -1)   # Reshape to flatten the image dimensions
+            # Compute the semantic guidance
+            sem_guid_norm = torch.norm(sem_diff, dim=-1) / self.n_guid_images  # Compute the norm of the difference
+
+        if self.norm_exp == 2:
+            print('Doing norm^2')
+            semantic_loss = sem_guid_norm ** 2  # Compute the norm^2
+        else:
+            print('Doing norm for semantic guidance')
+            semantic_loss = sem_guid_norm  # Compute the norm
+
+        print('sem_guid_norm:', sem_guid_norm.shape)
 
         if self.noiser.__name__ == 'gaussian': 
             Ax = self.operator.forward(x_0_hat, **kwargs)
             difference = measurement - Ax
             difference_reshaped = difference.reshape(difference.shape[0], -1)  # Reshape to flatten the image dimensions
             measurement_guid_norm = torch.linalg.norm(difference_reshaped, dim=-1)
-            norm_exp = kwargs.get('norm_exp', 1)
-            if norm_exp == 2:
-                print('Doing norm^2')
-                norm_power = measurement_guid_norm ** 2  
-            else:
-                print('Doing norm')
-                print('Doing norm2 for semantic guidance')
-                norm_power = measurement_guid_norm 
+            measurement_loss = measurement_guid_norm
 
-            overall_norm = self.scale * norm_power + self.sem_guid_scale * sem_guid_norm**2
-
-        norm_grad = torch.autograd.grad(outputs=overall_norm.sum(), inputs=x_prev)[0]
+        net_loss = self.scale * measurement_loss + sem_guid_scale_t * semantic_loss
+        norm_grad = torch.autograd.grad(outputs=net_loss.sum(), inputs=x_prev)[0]
 
         return norm_grad, measurement_guid_norm, sem_guid_norm
 
@@ -201,6 +231,6 @@ class PosteriorSamplingPlus(ConditioningMethod):
         norm_grad = torch.autograd.grad(outputs=norm, inputs=x_prev)[0]
         x_t -= norm_grad * self.scale
         return x_t, norm
-    
+
 
 
