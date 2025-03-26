@@ -10,6 +10,9 @@ from util.img_utils import clear_color
 from .posterior_mean_variance import get_mean_processor, get_var_processor
 
 
+from .diffstategrad_utils import compute_svd_and_adaptive_rank, apply_diffstategrad
+
+
 
 __SAMPLER__ = {}
 
@@ -186,55 +189,108 @@ class GaussianDiffusion:
 
         pbar = tqdm(list(range(self.num_timesteps))[::-1])
 
-        # print('num_timesteps = ', self.num_timesteps)
-        distances = np.zeros((x_start.shape[0], self.num_timesteps))
+        # # print('num_timesteps = ', self.num_timesteps)
+        # distances = np.zeros((x_start.shape[0], self.num_timesteps))
 
-        no_guidance_steps = kwargs.get('no_guidance_steps', self.num_timesteps)
+        # no_guidance_steps = kwargs.get('no_guidance_steps', self.num_timesteps)
 
-        # print('no_guidance_steps = ', no_guidance_steps)
+        # # print('no_guidance_steps = ', no_guidance_steps)
 
-        anneals = np.zeros(self.num_timesteps)
-        scales = np.zeros((x_start.shape[0], self.num_timesteps))
+        # anneals = np.zeros(self.num_timesteps)
+        # scales = np.zeros((x_start.shape[0], self.num_timesteps))
 
         path_curr_group_idx = kwargs.get('path_curr_group_idx', 0)
+        period = kwargs.get('period', 20)
+        project = kwargs.get('project', False)
 
+    
         for idx in pbar:
+
             # time = torch.tensor([idx] * img.shape[0], device=device)  # TODO: check this line
 
             time = torch.tensor([idx] * 1, device=device)
             
             img = img.requires_grad_()
+
             out = self.p_sample(x=img, t=time, model=model)
-            
+
+            # # Compute the contribution of the unconditional score
+            # x_0_hat = out['pred_xstart'].detach_()
+
+            # # Noise prediction
+            # prior_grad = self.betas[idx] * (img - self.alphas_cumprod[idx] * x_0_hat) / (1 - self.alphas_cumprod[idx])
+                        
             # Give condition.
             noisy_measurement = self.q_sample(measurement, t=time)
             beta_scale = self.betas[idx]
-
-            # # cosine schedule
-            # anneal_scale = kwargs.get('anneal_scale', 1)
-            # anneal_loc = kwargs.get('anneal_loc', 0.2)
-            # anneal_amp = kwargs.get('anneal_amp', 1)
-
-            # print('anneal_amp = ', anneal_amp)
 
             t = idx / self.num_timesteps  # Goes from 1 to zero
 
             # anneal = anneal_amp / (1 + math.exp(- anneal_scale * (t - anneal_loc)))
             # anneals[idx] = anneal
 
-            # TODO: how can we handle argument for different condition method?
-            img, measurement_distance, semantic_distance = measurement_cond_fn(x_t=out['sample'],
-                                    measurement=measurement,
-                                    noisy_measurement=noisy_measurement,
-                                    x_prev=img,
-                                    x_0_hat=out['pred_xstart'],
-                                    beta_scale=beta_scale,
-                                    t=t)
+            norm_grad, measurement_distance, semantic_distance = measurement_cond_fn(x_t=out['sample'],
+                                                      measurement=measurement,
+                                                      noisy_measurement=noisy_measurement,
+                                                      x_prev=img,
+                                                      x_0_hat=out['pred_xstart'],
+                                                      beta_scale=beta_scale,
+                                                      t=t)
+            
+            if project:
+                print('Projecting the gradient.')
+                U, s, Vh, adaptive_rank = compute_svd_and_adaptive_rank(z_t=out['sample'], var_cutoff=0.99)
+                print('Period = ', period)
+                # Apply DiffStateGrad to the normalized gradient
+                projected_grad = apply_diffstategrad(
+                    norm_grad=norm_grad,
+                    iteration_count=idx,
+                    period=period,
+                    U=U, s=s, Vh=Vh, 
+                    adaptive_rank=adaptive_rank
+                )
+            else:
+                projected_grad = norm_grad
 
+            img = out['sample'] - projected_grad  # Update the image
+
+            img.detach_()
+
+
+            # # TODO: how can we handle argument for different condition method?
+            # img, measurement_grad, measurement_distance = measurement_cond_fn(x_t=out['sample'],
+            #                                             measurement=measurement,
+            #                                             noisy_measurement=noisy_measurement,
+            #                                             x_prev=img,
+            #                                             x_0_hat=out['pred_xstart'],
+            #                                             beta_scale=beta_scale,
+            #                                             t=t,
+            #                                             guidance='measurement')
+            
+            # img = img.detach_()
+
+            # img = img.requires_grad_()
+            # out = self.p_sample(x=img, t=time, model=model)
+
+            # # Compute the semantic grad and distance
+            # img, semantic_grad, semantic_distance = measurement_cond_fn(x_t=out['sample'],
+            #                                             measurement=measurement,
+            #                                             noisy_measurement=noisy_measurement,
+            #                                             x_prev=img,
+            #                                             x_0_hat=out['pred_xstart'],
+            #                                             beta_scale=beta_scale,
+            #                                             t=t,
+            #                                             guidance='semantic')
+            
 
             img = img.detach_()
+            # img = out['sample'] - measurement_grad - semantic_grad  # Update the image
 
-            distances[:, self.num_timesteps-idx-1] = measurement_distance.detach().cpu().numpy()
+            # net_grad = prior_grad + measurement_grad + semantic_grad
+
+            # Compute the angel
+
+            # distances[:, self.num_timesteps-idx-1] = measurement_distance.detach().cpu().numpy()
            
             pbar.set_postfix({'measurement': measurement_distance.mean().item(), 'semantic': semantic_distance.mean().item()}, refresh=False)
             if record:
@@ -552,13 +608,10 @@ class SearchDDPM(DDPM):
         device = x_start.device
         resample_every_steps = 20
 
-        B, C, H, W = img.shape
-
-        costs = None  # Initialize costs
+        n_paths, n_channels, height, width = img.shape
 
         pbar = tqdm(list(range(self.num_timesteps))[::-1])
         for idx in pbar:
-            # time = torch.tensor([idx] * img.shape[0], device=device)  # TODO: check this line
 
             time = torch.tensor([idx] * 1, device=device)
 
@@ -568,34 +621,16 @@ class SearchDDPM(DDPM):
             img = out['sample']  # Proposed samples
 
             print('img requires grad = ', img.requires_grad)
-            
-            # # Give condition.
-            # noisy_measurement = self.q_sample(measurement, t=time)
 
-            # # TODO: how can we handle argument for different condition method?
-            # img, distance = measurement_cond_fn(x_t=out['sample'],
-            #                           measurement=measurement,
-            #                           noisy_measurement=noisy_measurement,
-            #                           x_prev=img,
-            #                           x_0_hat=out['pred_xstart'])
-            # img = img.detach_()  # Proposed samples
+            # Compute the cost
+            Ax = operator.forward(img)
+            diff = measurement - Ax
+            diff = diff.reshape(n_paths, -1)
 
-            # print('potential_type = ', potential_type)
-
-            # # Get a cosine schedule for the rs_temp for high to low
-            # rs_temp = 10 + np.sin(0.5 * np.pi * idx / self.num_timesteps) * 5
-
-            # print('rs_temp = ', rs_temp)
-
-            # img, costs = self.resample_update(candidates=img,
-            #                             denoised_candidates=out['pred_xstart'], 
-            #                             prev_costs=costs,
-            #                             operator=operator, 
-            #                             measurement=measurement, 
-            #                             rs_temp=rs_temp,
-            #                             resample=idx % resample_every_steps == 0,
-            #                             potential_type=potential_type, 
-            #                             steps_done=idx+1)
+            costs = torch.linalg.norm(diff, dim=-1, ord=2)
+            best_path = torch.argmin(costs)
+            print(f'Best path = {best_path}, cost = {costs[best_path]}')
+            img = img[best_path.repeat(n_paths)]
            
             # pbar.set_postfix({'distance': distance.mean().item()}, refresh=False)
             if record:

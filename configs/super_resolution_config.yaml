@@ -7,7 +7,7 @@ conditioning:
 data:
   name: ffhq
   # root: ./data/samples/
-  root: ../ref_images/
+  root: ../ood_images_cropped/
 
 measurement:
   operator:

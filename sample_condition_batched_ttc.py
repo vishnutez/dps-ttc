@@ -45,6 +45,9 @@ def main():
     parser.add_argument('--anneal_amp', type=float, default=1)
     parser.add_argument('--anneal_loc', type=float, default=0.5)
     parser.add_argument('--kernel_idx', type=int, default=0)
+
+
+    parser.add_argument('--ref_image_idxs', type=str, default='4')
     args = parser.parse_args()
    
     # logger
@@ -114,9 +117,7 @@ def main():
                                     transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))])
     dataset = get_dataset(**data_config, transforms=transform)
 
-    
-
-    subset = Subset(dataset, np.arange(args.start_idx, args.start_idx + args.n_data_samples, 1))
+    subset = Subset(dataset, [int(idx)+1 for idx in args.ref_image_idxs.split(',')])
     loader = get_dataloader(subset, batch_size=1, num_workers=0, train=False)
 
     # Exception) In case of inpainting, we need to generate a mask 
@@ -141,7 +142,7 @@ def main():
     # Do Inference
     for img_idx, ref_img in enumerate(loader):
         logger.info(f"Inference for image {args.start_idx + img_idx}")
-        fname = str(args.start_idx + img_idx).zfill(5)
+        fname = args.ref_image_idxs[img_idx].zfill(5)
         ref_img = ref_img.to(device)
 
         os.makedirs(os.path.join(out_path, 'recon_paths', f'{fname}'), exist_ok=True)

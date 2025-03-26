@@ -5,11 +5,17 @@ results_pathwise/
 old_results/
 old_logs/
 logs/
+logs_fs/
 misc_plots/
 semantic_guidance/
 semantic_guidance_old/
 results_hyper/
 figures/
+results_fs/
+results_proj/
+results_proj_5k_steps/
+results_search/
+results_unravel/
 
 # results_annealing/
 # results_annealing_exp/
@@ -22,9 +28,11 @@ figures/
 # results_semantic_norm2_rescaled/
 
 
-
 # Ignore the bkse, motionblur, facenet_pytorch folders
 bkse/
 motionblur/
 facenet_pytorch/
 CVLface/
+
+# Ignore __pychache__ folders
+__pycache__/

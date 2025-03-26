@@ -10,8 +10,8 @@ python3 sample_condition_hyper.py \
     --path_start_idx=0 \
     --kernel_idx=8 \
     --n_guid_images=1 \
-    --sem_scale=0 \
+    --sem_scale=0.1 \
     --measurement_scale=1.0 \
-    --anneal_factor=2 \
+    --anneal_factor=4 \
     --norm_exp=1 \
     --gpu=0 ;

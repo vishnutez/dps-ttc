@@ -144,8 +144,6 @@ class PosteriorSamplingSemanticGuid(ConditioningMethod):
 
     def measurement_semantic_guidance(self, x_prev, x_0_hat, measurement, **kwargs):
 
-        
-
         if self.sem_guid_scale == 0:
             print('No semantic guidance')
             sem_guid_norm = torch.tensor(0.0).to(x_0_hat.device)
@@ -192,8 +190,9 @@ class PosteriorSamplingSemanticGuid(ConditioningMethod):
     def conditioning(self, x_prev, x_t, x_0_hat, measurement, **kwargs):
         # norm_grad, norm = self.grad_and_value(x_prev=x_prev, x_0_hat=x_0_hat, measurement=measurement, retain_graph=True, **kwargs)
         norm_grad, measurement_error, semantic_error = self.measurement_semantic_guidance(x_prev=x_prev, x_0_hat=x_0_hat, measurement=measurement, **kwargs)
-        x_t -= norm_grad
-        return x_t, measurement_error, semantic_error 
+        # x_t -= norm_grad
+        print('Returning norm_grad')
+        return norm_grad, measurement_error, semantic_error 
     
     
 @register_conditioning_method(name='ps_anneal')
